@@ -1,30 +1,36 @@
 {
-  "name": "@treety/core",
+  "name": "@treety/cli",
   "version": "0.1.0",
-  "description": "Host-neutral TreeTY configuration and terminal orchestration engine.",
+  "description": "Manage hierarchical terminal workspaces from the command line.",
   "license": "MIT",
-  "engines": {
-    "node": ">=22"
+  "bin": {
+    "treety": "dist/cli.js"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/aaronccasanova/TreeTY.git",
-    "directory": "packages/core"
-  },
-  "publishConfig": {
-    "access": "public"
-  },
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/cli.js",
+  "types": "dist/cli.d.ts",
   "files": [
     "dist",
     "!dist/*.test.*",
     "LICENSE",
     "README.md"
   ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aaronccasanova/TreeTY.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@treety/core": "workspace:*"
   }
 }

@@ -43,6 +43,12 @@ export function parseTreeConfigContent(treeConfigFileContent: string): TreeConfi
   return parseTreeConfigValue(treeConfigValue);
 }
 
+export function formatTreeConfigContent(treeConfig: TreeConfig): string {
+  const validatedTreeConfig = parseTreeConfigContent(JSON.stringify(treeConfig));
+
+  return `${JSON.stringify(validatedTreeConfig, null, 2)}\n`;
+}
+
 export function resolveTreeConfig(
   treeConfig: TreeConfig,
   workspaceDirPath: string,
@@ -80,19 +86,23 @@ function parseTreeConfigValue(treeConfigValue: unknown): TreeConfig {
     parseTreeNodeConfig(treeNodeValue, `tree[${treeNodeIndex}]`, nodeIds),
   );
 
-  const treeConfig: TreeConfig = {
-    version: 1,
-    tree,
-  };
-
   if (treeConfigRecord.defaults !== undefined) {
-    treeConfig.defaults = parseTreeNodeDefaults(
+    const treeNodeDefaults = parseTreeNodeDefaults(
       treeConfigRecord.defaults,
       "defaults",
     );
+
+    return {
+      version: 1,
+      defaults: treeNodeDefaults,
+      tree,
+    };
   }
 
-  return treeConfig;
+  return {
+    version: 1,
+    tree,
+  };
 }
 
 function parseTreeNodeConfig(

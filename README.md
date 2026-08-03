@@ -1,6 +1,6 @@
 # TreeTY
 
-TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its first adapter is a VS Code extension, while its core engine has no VS Code dependencies.
+TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its first adapters are a VS Code extension and the `@treety/cli` package, while its core engine has no host dependencies.
 
 ## MVP behavior
 
@@ -11,15 +11,22 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 - Track stopped, starting, idle, running, and failed states.
 - Support interactive shells and direct startup commands.
 - Load one `.treety/tree.json` configuration from every VS Code workspace folder.
+- Manage tree structure through the `treety` command without hand-editing JSON.
 
 ## Architecture
 
 ```text
 packages/core
   configuration parser and validation
+  immutable tree creation, mutation, and validation
   inheritance and path resolution
   session lifecycle state machine
   host-neutral TerminalHost interface
+
+packages/cli
+  local and global configuration discovery
+  group and terminal creation
+  list, rename, move, and remove commands
 
 packages/vscode
   TreeDataProvider adapter
@@ -28,7 +35,38 @@ packages/vscode
   commands, menus, icons, and JSON schema
 ```
 
-The core package controls behavior. A host adapter controls rendering, process creation, persistence discovery, and user interaction. This boundary leaves room for a CLI, another IDE, an external-terminal bridge, or a standalone application without changing the tree model.
+The core package controls behavior. A host adapter controls rendering, process creation, persistence discovery, and user interaction. This boundary leaves room for another IDE, an external-terminal bridge, or a standalone application without changing the tree model.
+
+## CLI
+
+The publishable `@treety/cli` package wraps the core management API and exposes the `treety` executable.
+
+Run a command without installing it globally:
+
+```sh
+pnpm dlx @treety/cli init
+```
+
+For a pinned project version, install it as a development dependency:
+
+```sh
+pnpm add --save-dev @treety/cli
+pnpm exec treety init
+```
+
+Once the executable is available, the management workflow is:
+
+```sh
+treety init
+treety add group "Services" --cwd services
+treety add terminal "API server" --parent services --cwd api -- pnpm dev
+treety list
+treety rename api-server "Development API"
+treety move api-server --root
+treety remove api-server --yes
+```
+
+Commands use `.treety/tree.json` in the current workspace. If there is no local tree, TreeTY falls back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`. Pass `--global` to target the global tree explicitly, or `--config <path>` to target any configuration file.
 
 ## Configuration
 

@@ -6,10 +6,12 @@
   "license": "MIT",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "pnpm --filter @treety/core run build && pnpm --filter treety-vscode run build",
-    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter treety-vscode run check",
+    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety-vscode run build",
+    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter treety-vscode run check",
     "package": "pnpm --filter treety-vscode run package",
-    "test": "pnpm --filter @treety/core run test"
+    "package:cli": "pnpm --filter @treety/cli pack --pack-destination ../..",
+    "package:core": "pnpm --filter @treety/core pack --pack-destination ../..",
+    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
