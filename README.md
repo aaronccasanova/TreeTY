@@ -10,8 +10,9 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 - Reattach terminals revived by VS Code instead of launching duplicates.
 - Track stopped, starting, idle, running, and failed states.
 - Support interactive shells and direct startup commands.
-- Load one `.treety/tree.json` configuration from every VS Code workspace folder.
-- Manage tree structure through the `treety` command without hand-editing JSON.
+- Load workspace trees from `.treety/tree.json` and fall back to a global tree.
+- Manage tree structure from either the VS Code tree or the `treety` command.
+- Optionally add terminal working directories to VS Code Explorer and Source Control.
 
 ## Architecture
 
@@ -31,8 +32,8 @@ packages/cli
 packages/vscode
   TreeDataProvider adapter
   vscode.Terminal host implementation
-  workspace loading and file watching
-  commands, menus, icons, and JSON schema
+  local and global configuration discovery
+  tree management commands and native workspace integration
 ```
 
 The core package controls behavior. A host adapter controls rendering, process creation, persistence discovery, and user interaction. This boundary leaves room for another IDE, an external-terminal bridge, or a standalone application without changing the tree model.
@@ -70,7 +71,11 @@ Commands use `.treety/tree.json` in the current workspace. If there is no local 
 
 ## Configuration
 
-TreeTY reads `.treety/tree.json` from the workspace root:
+TreeTY reads `.treety/tree.json` from the workspace root. If a workspace does not have a local tree, the VS Code extension and CLI fall back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`. A VS Code window with no open folder loads the global tree directly, with relative directories resolved from the user's home directory.
+
+You can create the global file with `TreeTY: Initialize Global Tree` or `treety init --global`.
+
+Example configuration:
 
 ```json
 {
@@ -116,6 +121,16 @@ Relative `cwd` values resolve from the nearest ancestor. Terminal leaves without
 
 Environment values inherit and merge. A `null` value removes the variable from the launched terminal environment.
 
+## VS Code workflow
+
+Use the view title controls to create a terminal or group at the tree root. Use a workspace or group context menu to create nested nodes. Every group and terminal has rename, move, and delete actions. Deleting a group confirms the descendant count and closes running terminals in that subtree.
+
+Opening a terminal can also add its resolved working directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. Configure `TreeTY: Explorer Directory Sync` as `never`, `prompt`, or `always`. You can also use `TreeTY: Add Directory to VS Code Workspace` from any terminal's context menu.
+
+`TreeTY: Global Tree Visibility` controls whether the global tree is used only as a fallback, is always shown alongside workspace trees, or is hidden when folders are open. Empty VS Code windows always show the global tree.
+
+Adding the first folder to an empty VS Code window can restart the extension host. Native terminal persistence lets TreeTY reattach the session afterward.
+
 ## Development
 
 Requirements: Node.js 22 or newer and pnpm 10 or newer.
@@ -125,7 +140,28 @@ pnpm install
 pnpm check
 pnpm test
 pnpm build
-pnpm package
 ```
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
+
+All unpublished packages stay at version `0.0.0`. Create the stable local VSIX path with:
+
+```sh
+pnpm package
+```
+
+This writes `artifacts/treety-vscode-0.0.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+
+```sh
+pnpm package:snapshot
+```
+
+For example, this can create `artifacts/treety-vscode-0.0.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+
+Build and force-install a fresh snapshot in one step with:
+
+```sh
+pnpm install:snapshot
+```
+
+Snapshot timestamps identify local artifacts only. Marketplace pre-releases and release versioning will be handled by the distribution pipeline.

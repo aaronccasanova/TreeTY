@@ -127,28 +127,41 @@ function buildWorkspaceTreeItem(
   workspaceTreeEntry: WorkspaceTreeEntry,
 ): vscode.TreeItem {
   const workspaceTreeItem = new vscode.TreeItem(
-    workspaceTreeEntry.workspaceModel.workspaceFolder.name,
+    workspaceTreeEntry.workspaceModel.name,
     vscode.TreeItemCollapsibleState.Expanded,
   );
 
-  workspaceTreeItem.id = `workspace:${workspaceTreeEntry.workspaceModel.workspaceFolder.uri.toString()}`;
-  workspaceTreeItem.iconPath = new vscode.ThemeIcon("root-folder");
-  workspaceTreeItem.contextValue =
-    workspaceTreeEntry.workspaceModel.kind === "unconfigured"
-      ? "treetyWorkspace.unconfigured"
-      : "treetyWorkspace.configured";
+  workspaceTreeItem.id = workspaceTreeEntry.workspaceModel.id;
+  workspaceTreeItem.iconPath = new vscode.ThemeIcon(
+    workspaceTreeEntry.workspaceModel.configSource === "global"
+      ? "globe"
+      : "root-folder",
+  );
+  workspaceTreeItem.description =
+    workspaceTreeEntry.workspaceModel.configSource === "global"
+      ? "global"
+      : undefined;
+  workspaceTreeItem.contextValue = `treetyWorkspace.${workspaceTreeEntry.workspaceModel.kind}.${workspaceTreeEntry.workspaceModel.configSource}`;
 
   return workspaceTreeItem;
 }
 
 function buildMessageTreeItem(messageTreeEntry: MessageTreeEntry): vscode.TreeItem {
   if (messageTreeEntry.workspaceModel.kind === "unconfigured") {
-    const messageTreeItem = new vscode.TreeItem("Initialize TreeTY");
+    const isGlobalConfig =
+      messageTreeEntry.workspaceModel.configSource === "global";
+    const messageTreeItem = new vscode.TreeItem(
+      isGlobalConfig ? "Initialize global TreeTY" : "Initialize TreeTY",
+    );
 
     messageTreeItem.iconPath = new vscode.ThemeIcon("add");
-    messageTreeItem.description = "Create .treety/tree.json";
+    messageTreeItem.description = isGlobalConfig
+      ? "Create the global tree"
+      : "Create .treety/tree.json";
     messageTreeItem.command = {
-      command: "treety.initializeWorkspace",
+      command: isGlobalConfig
+        ? "treety.initializeGlobalTree"
+        : "treety.initializeWorkspace",
       title: "Initialize TreeTY workspace",
       arguments: [messageTreeEntry],
     };
@@ -280,5 +293,5 @@ function getTerminalStatusIcon(terminalStatus: TerminalStatus): vscode.ThemeIcon
 }
 
 function getNodeTreeItemId(nodeTreeEntry: NodeTreeEntry): string {
-  return `${nodeTreeEntry.workspaceModel.workspaceFolder.uri.toString()}:${nodeTreeEntry.treeNode.id}`;
+  return `${nodeTreeEntry.workspaceModel.id}:${nodeTreeEntry.treeNode.id}`;
 }

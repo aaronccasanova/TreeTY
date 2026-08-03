@@ -1,6 +1,6 @@
 {
   "name": "@treety/core",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Host-neutral TreeTY configuration and terminal orchestration engine.",
   "license": "MIT",
   "engines": {

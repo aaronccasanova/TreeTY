@@ -21,8 +21,31 @@ export async function activate(
       "treety.initializeWorkspace",
       (treeEntry?: TreeEntry) => treeTYController.initializeWorkspace(treeEntry),
     ),
+    registerAsyncCommand("treety.initializeGlobalTree", () =>
+      treeTYController.initializeGlobalTree(),
+    ),
     registerAsyncCommand("treety.openConfig", (treeEntry?: TreeEntry) =>
       treeTYController.openConfig(treeEntry),
+    ),
+    registerAsyncCommand("treety.createGroup", (treeEntry?: TreeEntry) =>
+      treeTYController.createGroup(treeEntry),
+    ),
+    registerAsyncCommand("treety.createTerminal", (treeEntry?: TreeEntry) =>
+      treeTYController.createTerminal(treeEntry),
+    ),
+    registerAsyncCommand(
+      "treety.renameNode",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.renameNode(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
+      "treety.moveNode",
+      (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
+      "treety.deleteNode",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.deleteNode(nodeTreeEntry),
     ),
     registerAsyncCommand(
       "treety.openTerminal",
@@ -38,6 +61,11 @@ export async function activate(
       "treety.stopTerminal",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.stopTerminal(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
+      "treety.addTerminalDirectoryToWorkspace",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.addTerminalDirectoryToWorkspace(nodeTreeEntry),
     ),
   );
 

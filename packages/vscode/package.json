@@ -2,7 +2,7 @@
   "name": "treety-vscode",
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "treety",
   "license": "MIT",
   "engines": {
@@ -21,6 +21,7 @@
   "activationEvents": [
     "onView:treety.terminals",
     "onCommand:treety.initializeWorkspace",
+    "onCommand:treety.initializeGlobalTree",
     "onCommand:treety.openTerminal"
   ],
   "main": "./dist/extension.js",
@@ -37,9 +38,39 @@
         "icon": "$(new-folder)"
       },
       {
+        "command": "treety.initializeGlobalTree",
+        "title": "TreeTY: Initialize Global Tree",
+        "icon": "$(globe)"
+      },
+      {
         "command": "treety.openConfig",
         "title": "TreeTY: Open Configuration",
         "icon": "$(json)"
+      },
+      {
+        "command": "treety.createGroup",
+        "title": "TreeTY: Create Group",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "treety.createTerminal",
+        "title": "TreeTY: Create Terminal",
+        "icon": "$(add)"
+      },
+      {
+        "command": "treety.renameNode",
+        "title": "TreeTY: Rename",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "treety.moveNode",
+        "title": "TreeTY: Move",
+        "icon": "$(type-hierarchy-sub)"
+      },
+      {
+        "command": "treety.deleteNode",
+        "title": "TreeTY: Delete",
+        "icon": "$(trash)"
       },
       {
         "command": "treety.openTerminal",
@@ -55,6 +86,11 @@
         "command": "treety.stopTerminal",
         "title": "TreeTY: Stop Terminal",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "treety.addTerminalDirectoryToWorkspace",
+        "title": "TreeTY: Add Directory to VS Code Workspace",
+        "icon": "$(folder-library)"
       }
     ],
     "configuration": {
@@ -69,12 +105,45 @@
           "type": "boolean",
           "default": true,
           "description": "Show terminal lifecycle states beside terminal names."
+        },
+        "treety.explorerDirectorySync": {
+          "type": "string",
+          "enum": [
+            "never",
+            "prompt",
+            "always"
+          ],
+          "enumDescriptions": [
+            "Do not add terminal directories to the VS Code workspace automatically.",
+            "Ask before adding a terminal directory that is outside the current workspace.",
+            "Add terminal directories outside the current workspace when their terminals open."
+          ],
+          "default": "prompt",
+          "description": "Controls whether opening a TreeTY terminal adds its working directory to the VS Code workspace, making it available to Explorer and Source Control. VS Code may reload the extension host when the first folder is added."
+        },
+        "treety.globalTreeVisibility": {
+          "type": "string",
+          "enum": [
+            "fallback",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Show the global tree once when an open folder does not have a local TreeTY configuration.",
+            "Show the global tree alongside configured workspace trees.",
+            "Do not use the global tree as a fallback when folders are open."
+          ],
+          "default": "fallback",
+          "description": "Controls when the global terminal tree appears in windows with open folders. Empty VS Code windows always show the global tree."
         }
       }
     },
     "jsonValidation": [
       {
-        "fileMatch": "**/.treety/tree.json",
+        "fileMatch": [
+          "**/.treety/tree.json",
+          "**/.config/treety/tree.json"
+        ],
         "url": "./schemas/treety.schema.json"
       }
     ],
@@ -98,25 +167,35 @@
     "viewsWelcome": [
       {
         "view": "treety.terminals",
-        "contents": "Open a folder to configure a terminal tree.\n[Initialize TreeTY](command:treety.initializeWorkspace)"
+        "contents": "Create a global terminal tree or initialize the current workspace.\n[Initialize global TreeTY](command:treety.initializeGlobalTree)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "treety.refresh",
+          "command": "treety.createTerminal",
           "when": "view == treety.terminals",
           "group": "navigation@1"
         },
         {
-          "command": "treety.openConfig",
+          "command": "treety.createGroup",
           "when": "view == treety.terminals",
           "group": "navigation@2"
         },
         {
+          "command": "treety.refresh",
+          "when": "view == treety.terminals",
+          "group": "navigation@8"
+        },
+        {
+          "command": "treety.openConfig",
+          "when": "view == treety.terminals",
+          "group": "navigation@9"
+        },
+        {
           "command": "treety.initializeWorkspace",
           "when": "view == treety.terminals",
-          "group": "navigation@3"
+          "group": "navigation@10"
         }
       ],
       "view/item/context": [
@@ -137,13 +216,53 @@
         },
         {
           "command": "treety.openConfig",
-          "when": "view == treety.terminals && viewItem == treetyWorkspace.configured",
+          "when": "view == treety.terminals && viewItem =~ /^treetyWorkspace\\.configured/",
           "group": "navigation@1"
         },
         {
           "command": "treety.initializeWorkspace",
-          "when": "view == treety.terminals && viewItem == treetyWorkspace.unconfigured",
+          "when": "view == treety.terminals && viewItem == treetyWorkspace.unconfigured.workspace",
           "group": "navigation@1"
+        },
+        {
+          "command": "treety.initializeGlobalTree",
+          "when": "view == treety.terminals && viewItem == treetyWorkspace.unconfigured.global",
+          "group": "navigation@1"
+        },
+        {
+          "command": "treety.createTerminal",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
+          "group": "inline@4"
+        },
+        {
+          "command": "treety.createGroup",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
+          "group": "navigation@2"
+        },
+        {
+          "command": "treety.createTerminal",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
+          "group": "navigation@1"
+        },
+        {
+          "command": "treety.renameNode",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
+          "group": "modification@1"
+        },
+        {
+          "command": "treety.moveNode",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
+          "group": "modification@2"
+        },
+        {
+          "command": "treety.deleteNode",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
+          "group": "modification@3"
+        },
+        {
+          "command": "treety.addTerminalDirectoryToWorkspace",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "workspace@1"
         }
       ],
       "commandPalette": [
@@ -158,6 +277,22 @@
         {
           "command": "treety.stopTerminal",
           "when": "false"
+        },
+        {
+          "command": "treety.renameNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.moveNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.deleteNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.addTerminalDirectoryToWorkspace",
+          "when": "false"
         }
       ]
     }
@@ -165,7 +300,7 @@
   "scripts": {
     "build": "pnpm run check && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
     "check": "tsc -p tsconfig.json --noEmit",
-    "package": "pnpm run build && vsce package --no-dependencies --allow-missing-repository --out ../../treety-vscode-0.1.0.vsix"
+    "package": "node ../../scripts/package-vscode-extension.mjs"
   },
   "dependencies": {
     "@treety/core": "workspace:*"

@@ -150,7 +150,7 @@ test.test("prints help and version without a configuration", async () => {
     await runCli(["--version"], { output: capturedOutput.output }),
     0,
   );
-  assert.equal(capturedOutput.messages.at(-1), "0.1.0");
+  assert.equal(capturedOutput.messages.at(-1), "0.0.0");
 });
 
 test.test("rejects unknown options before changing configuration", async () => {
