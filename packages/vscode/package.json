@@ -1,0 +1,178 @@
+{
+  "name": "treety-vscode",
+  "displayName": "TreeTY",
+  "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
+  "version": "0.1.0",
+  "publisher": "treety",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "terminal",
+    "tree",
+    "workspace",
+    "microservices",
+    "agents"
+  ],
+  "activationEvents": [
+    "onView:treety.terminals",
+    "onCommand:treety.initializeWorkspace",
+    "onCommand:treety.openTerminal"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "treety.refresh",
+        "title": "TreeTY: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "treety.initializeWorkspace",
+        "title": "TreeTY: Initialize Workspace",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "treety.openConfig",
+        "title": "TreeTY: Open Configuration",
+        "icon": "$(json)"
+      },
+      {
+        "command": "treety.openTerminal",
+        "title": "TreeTY: Open Terminal",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "treety.restartTerminal",
+        "title": "TreeTY: Restart Terminal",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "treety.stopTerminal",
+        "title": "TreeTY: Stop Terminal",
+        "icon": "$(debug-stop)"
+      }
+    ],
+    "configuration": {
+      "title": "TreeTY",
+      "properties": {
+        "treety.confirmBeforeStopping": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before closing a live TreeTY terminal."
+        },
+        "treety.showStatusDescriptions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show terminal lifecycle states beside terminal names."
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.treety/tree.json",
+        "url": "./schemas/treety.schema.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "treety",
+          "title": "TreeTY",
+          "icon": "media/treety.svg"
+        }
+      ]
+    },
+    "views": {
+      "treety": [
+        {
+          "id": "treety.terminals",
+          "name": "Terminal tree"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "treety.terminals",
+        "contents": "Open a folder to configure a terminal tree.\n[Initialize TreeTY](command:treety.initializeWorkspace)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "treety.refresh",
+          "when": "view == treety.terminals",
+          "group": "navigation@1"
+        },
+        {
+          "command": "treety.openConfig",
+          "when": "view == treety.terminals",
+          "group": "navigation@2"
+        },
+        {
+          "command": "treety.initializeWorkspace",
+          "when": "view == treety.terminals",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "treety.openTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "inline@1"
+        },
+        {
+          "command": "treety.restartTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "inline@2"
+        },
+        {
+          "command": "treety.stopTerminal",
+          "when": "view == treety.terminals && (viewItem == treetyTerminal.idle || viewItem == treetyTerminal.running || viewItem == treetyTerminal.starting)",
+          "group": "inline@3"
+        },
+        {
+          "command": "treety.openConfig",
+          "when": "view == treety.terminals && viewItem == treetyWorkspace.configured",
+          "group": "navigation@1"
+        },
+        {
+          "command": "treety.initializeWorkspace",
+          "when": "view == treety.terminals && viewItem == treetyWorkspace.unconfigured",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "treety.openTerminal",
+          "when": "false"
+        },
+        {
+          "command": "treety.restartTerminal",
+          "when": "false"
+        },
+        {
+          "command": "treety.stopTerminal",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "pnpm run check && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "package": "pnpm run build && vsce package --no-dependencies --allow-missing-repository --out ../../treety-vscode-0.1.0.vsix"
+  },
+  "dependencies": {
+    "@treety/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0"
+  }
+}

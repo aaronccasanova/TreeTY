@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "defaults": {
+    "restartPolicy": "manual",
+    "env": {
+      "TREETY_WORKSPACE": "development"
+    }
+  },
+  "tree": [
+    {
+      "kind": "group",
+      "id": "packages",
+      "name": "Packages",
+      "cwd": "packages",
+      "children": [
+        {
+          "kind": "terminal",
+          "id": "core-shell",
+          "name": "Core shell",
+          "cwd": "core"
+        },
+        {
+          "kind": "terminal",
+          "id": "vscode-shell",
+          "name": "VS Code adapter shell",
+          "cwd": "vscode"
+        }
+      ]
+    },
+    {
+      "kind": "group",
+      "id": "quality",
+      "name": "Quality",
+      "children": [
+        {
+          "kind": "terminal",
+          "id": "tests",
+          "name": "Core tests",
+          "command": {
+            "executable": "pnpm",
+            "args": ["test"]
+          }
+        },
+        {
+          "kind": "terminal",
+          "id": "build",
+          "name": "Build all packages",
+          "command": {
+            "executable": "pnpm",
+            "args": ["build"]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "terminal",
+      "id": "workspace-shell",
+      "name": "Workspace shell"
+    }
+  ]
+}

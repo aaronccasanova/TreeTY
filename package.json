@@ -1,0 +1,18 @@
+{
+  "name": "treety-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A hierarchical terminal workspace for VS Code and future hosts.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "build": "pnpm --filter @treety/core run build && pnpm --filter treety-vscode run build",
+    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter treety-vscode run check",
+    "package": "pnpm --filter treety-vscode run package",
+    "test": "pnpm --filter @treety/core run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

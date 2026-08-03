@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://treety.dev/schemas/tree.json",
+  "title": "TreeTY workspace configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "tree"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "defaults": {
+      "$ref": "#/$defs/defaults"
+    },
+    "tree": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    }
+  },
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executable"
+      ],
+      "properties": {
+        "executable": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1
+        },
+        "env": {
+          "$ref": "#/$defs/environment"
+        },
+        "shell": {
+          "$ref": "#/$defs/shell"
+        },
+        "restartPolicy": {
+          "enum": [
+            "manual",
+            "onOpen"
+          ]
+        }
+      }
+    },
+    "node": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/group"
+        },
+        {
+          "$ref": "#/$defs/terminal"
+        }
+      ]
+    },
+    "group": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/defaults"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "children"
+          ],
+          "properties": {
+            "kind": {
+              "const": "group"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cwd": {
+              "type": "string",
+              "minLength": 1
+            },
+            "env": {
+              "$ref": "#/$defs/environment"
+            },
+            "shell": {
+              "$ref": "#/$defs/shell"
+            },
+            "restartPolicy": {
+              "enum": [
+                "manual",
+                "onOpen"
+              ]
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "terminal": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/defaults"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "const": "terminal"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cwd": {
+              "type": "string",
+              "minLength": 1
+            },
+            "env": {
+              "$ref": "#/$defs/environment"
+            },
+            "shell": {
+              "$ref": "#/$defs/shell"
+            },
+            "restartPolicy": {
+              "enum": [
+                "manual",
+                "onOpen"
+              ]
+            },
+            "command": {
+              "$ref": "#/$defs/command"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
