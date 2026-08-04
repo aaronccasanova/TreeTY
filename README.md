@@ -203,3 +203,5 @@ pnpm package:pre-release
 ```
 
 VS Code pre-releases use odd minor versions (`0.1.x`, `0.3.x`, etc). Stable releases use even minor versions (`0.2.x`, `0.4.x`, etc). Pre-release status is stored in the VSIX manifest rather than a SemVer suffix.
+
+See [RELEASING.md](RELEASING.md) for the complete npm and VS Code Marketplace release workflow.
