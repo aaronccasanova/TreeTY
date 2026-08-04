@@ -50,13 +50,37 @@ pnpm prompts directly when npm requires a one-time password or web-based authent
 
 ## Publish the VS Code extension
 
-The VS Code Marketplace supports command-line publishing through `vsce`. For the current local authentication flow, sign in once with the `TreeTY` publisher ID:
+The VS Code Marketplace supports command-line publishing through `vsce`. TreeTY installs `@vscode/vsce` as a local development dependency, so a global `vsce` command is not required.
+
+### Create a Marketplace token
+
+Create the token with the same Microsoft account that owns the `TreeTY` Marketplace publisher:
+
+1. Sign in to the [Azure DevOps portal](https://dev.azure.com/).
+2. Open the user settings menu from your avatar, then select **Personal access tokens**.
+3. Select **New Token**.
+4. Enter a descriptive name such as `TreeTY VS Code publishing`.
+5. Set **Organization** to **All accessible organizations**.
+6. Choose the shortest practical expiration period.
+7. Select **Custom defined** scopes, then select **Show all scopes**.
+8. Under **Marketplace**, enable **Manage**.
+9. Select **Create**, then copy the token immediately. Azure DevOps displays it only once.
+
+See the [official VS Code publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#get-a-personal-access-token) for the current token requirements.
+
+Sign in once with the local `vsce` installation and the `TreeTY` publisher ID:
 
 ```sh
 pnpm --dir packages/vscode exec vsce login TreeTY
 ```
 
-`vsce login` prompts for an Azure DevOps Personal Access Token with the Marketplace `Manage` scope. It stores the verified credential for later commands. It does not currently use a browser-based developer login.
+Paste the token at the `Personal Access Token for publisher 'TreeTY':` prompt, then press Enter. The prompt does not display the pasted value. `vsce login` stores the verified credential for later commands and does not currently use a browser-based developer login. Running the publish command without logging in first produces the same token prompt and can publish immediately.
+
+If `vsce` cannot open the operating system credential store, it warns that it will store the token as clear text in `~/.vsce`. Use a short-lived token in that situation. After publishing, remove the stored publisher credential with:
+
+```sh
+pnpm --dir packages/vscode exec vsce logout TreeTY
+```
 
 Publish the pre-release:
 
