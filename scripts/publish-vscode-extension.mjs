@@ -34,12 +34,6 @@ function main() {
     ["exec", "vsce", "publish", "--packagePath", artifactFilePath],
     extensionDirPath,
   );
-
-  console.log(
-    `Published TreeTY.treety@${extensionPackageConfig.version}${
-      shouldPublishPreRelease ? " as a pre-release" : ""
-    } from ${artifactFilePath}`,
-  );
 }
 
 function runCommand(commandName, commandArguments, currentDirPath) {
