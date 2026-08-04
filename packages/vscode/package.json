@@ -1,5 +1,5 @@
 {
-  "name": "treety-vscode",
+  "name": "treety",
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
   "version": "0.0.0",

@@ -642,7 +642,7 @@ async function getWorkspaceModelLocations(
       hasUnconfiguredWorkspace &&
       globalConfigExists)
   ) {
-    workspaceModelLocations.push(
+    workspaceModelLocations.unshift(
       getGlobalWorkspaceModelLocation(globalConfigFileUri),
     );
   }

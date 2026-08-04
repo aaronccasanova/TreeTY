@@ -2,7 +2,7 @@
 
 TreeTY organizes native VS Code terminals into a nested, persistent tree.
 
-TreeTY shows an explicit root for every open workspace and a separate global root. Initialize a local root to create `.treety/tree.json`, or initialize the global root to create `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.
+TreeTY shows the global root first as a stable anchor, followed by an explicit root for every open workspace. Initialize a local root to create `.treety/tree.json`, or initialize the global root to create `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.
 
 Select a local root, global root, or group before using the title-bar controls. `+` creates a terminal, and `new folder` creates a group at the selected location. The same actions are available inline and from each root or group's context menu. Each create prompt confirms its destination. Select a terminal leaf to create or reveal its native terminal. Use its inline controls to open, restart, stop, or delete it. Stopping closes the native terminal but preserves the tree entry; deleting removes the entry after confirmation.
 

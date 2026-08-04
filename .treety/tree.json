@@ -39,6 +39,19 @@
               "kind": "terminal",
               "id": "adsf",
               "name": "adsf"
+            },
+            {
+              "kind": "group",
+              "id": "adsf-2",
+              "name": "adsf",
+              "children": [
+                {
+                  "kind": "group",
+                  "id": "hi",
+                  "name": "hi",
+                  "children": []
+                }
+              ]
             }
           ]
         }

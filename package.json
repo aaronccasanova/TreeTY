@@ -6,8 +6,8 @@
   "license": "MIT",
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety-vscode run build",
-    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter treety-vscode run check",
+    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety run build",
+    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter treety run check",
     "package": "node scripts/package-vscode-extension.mjs",
     "package:snapshot": "node scripts/package-vscode-extension.mjs --snapshot",
     "install:snapshot": "node scripts/package-vscode-extension.mjs --snapshot --install",

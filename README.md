@@ -129,7 +129,7 @@ Terminal rows expose open, restart, stop, and delete controls. Stop closes the n
 
 Opening a terminal can also add its resolved working directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. Configure `TreeTY: Explorer Directory Sync` as `never`, `prompt`, or `always`. You can also use `TreeTY: Add Directory to VS Code Workspace` from any terminal's context menu.
 
-`TreeTY: Global Tree Visibility` shows the global root alongside local roots by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
+`TreeTY: Global Tree Visibility` shows the global root first, followed by local roots, by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
 
 Adding the first folder to an empty VS Code window can restart the extension host. Native terminal persistence lets TreeTY reattach the session afterward.
 
@@ -152,13 +152,13 @@ All unpublished packages stay at version `0.0.0`. Create the stable local VSIX p
 pnpm package
 ```
 
-This writes `artifacts/treety-vscode-0.0.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+This writes `artifacts/treety-0.0.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-vscode-0.0.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+For example, this can create `artifacts/treety-0.0.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
 
 Build and force-install a fresh snapshot in one step with:
 

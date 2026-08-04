@@ -61,12 +61,12 @@ function main() {
 
 function buildArtifactFileName(extensionVersion, shouldCreateSnapshot) {
   if (!shouldCreateSnapshot) {
-    return `treety-vscode-${extensionVersion}.vsix`;
+    return `treety-${extensionVersion}.vsix`;
   }
 
   const snapshotTimestamp = formatSnapshotTimestamp(new Date());
 
-  return `treety-vscode-${extensionVersion}-snapshot.${snapshotTimestamp}.vsix`;
+  return `treety-${extensionVersion}-snapshot.${snapshotTimestamp}.vsix`;
 }
 
 function formatSnapshotTimestamp(snapshotDate) {
