@@ -156,7 +156,11 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!workspaceModel) return;
 
-    const groupName = await getTreeNodeName("Group name");
+    const groupName = await getTreeNodeName({
+      title: "Create TreeTY group",
+      prompt: `Create in ${getTargetDescription(treeEntry, workspaceModel)}.`,
+      placeHolder: "Group name",
+    });
 
     if (!groupName) return;
 
@@ -174,7 +178,11 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!workspaceModel) return;
 
-    const terminalName = await getTreeNodeName("Terminal name");
+    const terminalName = await getTreeNodeName({
+      title: "Create TreeTY terminal",
+      prompt: `Create in ${getTargetDescription(treeEntry, workspaceModel)}.`,
+      placeHolder: "Terminal name",
+    });
 
     if (!terminalName) return;
 
@@ -374,7 +382,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     const globalConfigExists = await getFileExists(this.globalConfigFileUri);
     const globalTreeVisibility = vscode.workspace
       .getConfiguration("treety")
-      .get<GlobalTreeVisibility>("globalTreeVisibility", "fallback");
+      .get<GlobalTreeVisibility>("globalTreeVisibility", "always");
     const workspaceModelLocations = await getWorkspaceModelLocations(
       workspaceFolders,
       this.globalConfigFileUri,
@@ -460,7 +468,11 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private async getTargetWorkspaceModel(
     treeEntry?: TreeEntry,
   ): Promise<WorkspaceModel | undefined> {
-    if (treeEntry) return treeEntry.workspaceModel;
+    if (treeEntry) {
+      return this.workspaceModels.find(
+        (workspaceModel) => workspaceModel.id === treeEntry.workspaceModel.id,
+      );
+    }
 
     if (this.workspaceModels.length === 1) return this.workspaceModels[0];
 
@@ -611,7 +623,7 @@ async function getWorkspaceModelLocations(
   }
 
   const workspaceModelLocations: WorkspaceModelLocation[] = [];
-  let shouldAddGlobalWorkspaceModel = false;
+  let hasUnconfiguredWorkspace = false;
 
   for (const workspaceFolder of workspaceFolders) {
     const workspaceModelLocation = getWorkspaceModelLocation(workspaceFolder);
@@ -619,26 +631,17 @@ async function getWorkspaceModelLocations(
       workspaceModelLocation.configFileUri,
     );
 
-    if (workspaceConfigExists) {
-      workspaceModelLocations.push(workspaceModelLocation);
-
-      continue;
-    }
-
-    if (globalConfigExists && globalTreeVisibility !== "never") {
-      shouldAddGlobalWorkspaceModel = true;
-
-      continue;
-    }
-
     workspaceModelLocations.push(workspaceModelLocation);
+
+    if (!workspaceConfigExists) hasUnconfiguredWorkspace = true;
   }
 
-  if (globalTreeVisibility === "always") {
-    shouldAddGlobalWorkspaceModel = true;
-  }
-
-  if (shouldAddGlobalWorkspaceModel) {
+  if (
+    globalTreeVisibility === "always" ||
+    (globalTreeVisibility === "fallback" &&
+      hasUnconfiguredWorkspace &&
+      globalConfigExists)
+  ) {
     workspaceModelLocations.push(
       getGlobalWorkspaceModelLocation(globalConfigFileUri),
     );
@@ -692,9 +695,11 @@ function getParentUri(uri: vscode.Uri): vscode.Uri {
   return uri.with({ path: path.posix.dirname(uri.path) });
 }
 
-async function getTreeNodeName(prompt: string): Promise<string | undefined> {
+async function getTreeNodeName(
+  inputBoxOptions: vscode.InputBoxOptions,
+): Promise<string | undefined> {
   const treeNodeName = await vscode.window.showInputBox({
-    prompt,
+    ...inputBoxOptions,
     validateInput: validateTreeNodeName,
   });
 
@@ -710,6 +715,18 @@ function getTargetParentId(treeEntry?: TreeEntry): string | undefined {
   if (treeEntry.treeNode.kind !== "group") return undefined;
 
   return treeEntry.treeNode.id;
+}
+
+function getTargetDescription(
+  treeEntry: TreeEntry | undefined,
+  workspaceModel: ConfiguredWorkspaceModel,
+): string {
+  if (treeEntry?.kind !== "node") return `the ${workspaceModel.name} root`;
+  if (treeEntry.treeNode.kind !== "group") {
+    return `the ${workspaceModel.name} root`;
+  }
+
+  return `"${treeEntry.treeNode.name}"`;
 }
 
 function getMoveDestinationQuickPickItems(

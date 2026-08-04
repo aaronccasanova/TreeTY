@@ -29,13 +29,20 @@
           "kind": "terminal",
           "id": "testing",
           "name": "Test"
+        },
+        {
+          "kind": "group",
+          "id": "experiments",
+          "name": "Experiments",
+          "children": [
+            {
+              "kind": "terminal",
+              "id": "adsf",
+              "name": "adsf"
+            }
+          ]
         }
       ]
-    },
-    {
-      "kind": "terminal",
-      "id": "workspace-shell",
-      "name": "Workspace shell"
     }
   ]
 }

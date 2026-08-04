@@ -73,12 +73,6 @@ export class TreeTYTreeProvider implements vscode.TreeDataProvider<TreeEntry> {
     const workspaceModels = this.workspaceModelSource.getWorkspaceModels();
 
     if (!treeEntry) {
-      if (workspaceModels.length === 1) {
-        const workspaceModel = workspaceModels[0];
-
-        return workspaceModel ? getWorkspaceChildren(workspaceModel) : [];
-      }
-
       return workspaceModels.map((workspaceModel) => ({
         kind: "workspace",
         workspaceModel,
@@ -140,7 +134,9 @@ function buildWorkspaceTreeItem(
   workspaceTreeItem.description =
     workspaceTreeEntry.workspaceModel.configSource === "global"
       ? "global"
-      : undefined;
+      : "workspace";
+  workspaceTreeItem.tooltip =
+    workspaceTreeEntry.workspaceModel.configFileUri.fsPath;
   workspaceTreeItem.contextValue = `treetyWorkspace.${workspaceTreeEntry.workspaceModel.kind}.${workspaceTreeEntry.workspaceModel.configSource}`;
 
   return workspaceTreeItem;

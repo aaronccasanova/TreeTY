@@ -2,13 +2,13 @@
 
 TreeTY organizes native VS Code terminals into a nested, persistent tree.
 
-Create `.treety/tree.json` manually or run `TreeTY: Initialize Workspace`. You can also run `TreeTY: Initialize Global Tree` to use TreeTY in an empty VS Code window. Workspace trees fall back to the global configuration at `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.
+TreeTY shows an explicit root for every open workspace and a separate global root. Initialize a local root to create `.treety/tree.json`, or initialize the global root to create `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.
 
-Use the view title and context-menu controls to create groups and terminals, rename or move nodes, and delete them with confirmation. Select a terminal leaf to create or reveal its native terminal. Groups provide inherited directories, environment variables, shell settings, and restart policies.
+Select a local root, global root, or group before using the title-bar controls. `+` creates a terminal, and `new folder` creates a group at the selected location. The same actions are available inline and from each root or group's context menu. Each create prompt confirms its destination. Select a terminal leaf to create or reveal its native terminal. Use its inline controls to open, restart, stop, or delete it. Stopping closes the native terminal but preserves the tree entry; deleting removes the entry after confirmation.
 
 `TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its working directory to the VS Code workspace. This exposes the directory to Explorer and VS Code's native Source Control integration. The setting supports `never`, `prompt`, and `always`, and the terminal context menu also provides an explicit add-directory command.
 
-`TreeTY: Global Tree Visibility` can keep the global tree as a fallback, always show it alongside local trees, or hide it while folders are open. Empty windows always load the global tree.
+`TreeTY: Global Tree Visibility` shows local and global roots together by default. It can instead keep the global tree as a fallback or hide it while folders are open. Empty windows always load the global root.
 
 The extension includes JSON validation and completion for the configuration file. The source workspace's root README contains the full configuration reference and architecture.
 

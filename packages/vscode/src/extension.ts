@@ -8,30 +8,39 @@ export async function activate(
 ): Promise<void> {
   const treeTYController = new TreeTYController();
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
+  const treeTYTreeView = vscode.window.createTreeView("treety.terminals", {
+    treeDataProvider: treeTYTreeProvider,
+  });
 
   extensionContext.subscriptions.push(
     treeTYController,
     treeTYTreeProvider,
-    vscode.window.registerTreeDataProvider(
-      "treety.terminals",
-      treeTYTreeProvider,
-    ),
+    treeTYTreeView,
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
     registerAsyncCommand(
       "treety.initializeWorkspace",
-      (treeEntry?: TreeEntry) => treeTYController.initializeWorkspace(treeEntry),
+      (treeEntry?: TreeEntry) =>
+        treeTYController.initializeWorkspace(
+          getCommandTreeEntry(treeEntry, treeTYTreeView),
+        ),
     ),
     registerAsyncCommand("treety.initializeGlobalTree", () =>
       treeTYController.initializeGlobalTree(),
     ),
     registerAsyncCommand("treety.openConfig", (treeEntry?: TreeEntry) =>
-      treeTYController.openConfig(treeEntry),
+      treeTYController.openConfig(
+        getCommandTreeEntry(treeEntry, treeTYTreeView),
+      ),
     ),
     registerAsyncCommand("treety.createGroup", (treeEntry?: TreeEntry) =>
-      treeTYController.createGroup(treeEntry),
+      treeTYController.createGroup(
+        getCommandTreeEntry(treeEntry, treeTYTreeView),
+      ),
     ),
     registerAsyncCommand("treety.createTerminal", (treeEntry?: TreeEntry) =>
-      treeTYController.createTerminal(treeEntry),
+      treeTYController.createTerminal(
+        getCommandTreeEntry(treeEntry, treeTYTreeView),
+      ),
     ),
     registerAsyncCommand(
       "treety.renameNode",
@@ -73,6 +82,13 @@ export async function activate(
 }
 
 export function deactivate(): void {}
+
+function getCommandTreeEntry(
+  treeEntry: TreeEntry | undefined,
+  treeTYTreeView: vscode.TreeView<TreeEntry>,
+): TreeEntry | undefined {
+  return treeEntry ?? treeTYTreeView.selection[0];
+}
 
 function registerAsyncCommand<Arguments extends unknown[]>(
   commandName: string,

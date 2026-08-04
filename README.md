@@ -10,7 +10,7 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 - Reattach terminals revived by VS Code instead of launching duplicates.
 - Track stopped, starting, idle, running, and failed states.
 - Support interactive shells and direct startup commands.
-- Load workspace trees from `.treety/tree.json` and fall back to a global tree.
+- Load workspace trees from `.treety/tree.json` alongside a separately manageable global tree.
 - Manage tree structure from either the VS Code tree or the `treety` command.
 - Optionally add terminal working directories to VS Code Explorer and Source Control.
 
@@ -71,7 +71,7 @@ Commands use `.treety/tree.json` in the current workspace. If there is no local 
 
 ## Configuration
 
-TreeTY reads `.treety/tree.json` from the workspace root. If a workspace does not have a local tree, the VS Code extension and CLI fall back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`. A VS Code window with no open folder loads the global tree directly, with relative directories resolved from the user's home directory.
+TreeTY reads `.treety/tree.json` from the workspace root. The CLI falls back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json` when a workspace does not have a local tree. The VS Code extension shows explicit local and global roots together by default, so either scope can be managed without changing windows. A VS Code window with no open folder loads the global tree directly, with relative directories resolved from the user's home directory.
 
 You can create the global file with `TreeTY: Initialize Global Tree` or `treety init --global`.
 
@@ -123,11 +123,13 @@ Environment values inherit and merge. A `null` value removes the variable from t
 
 ## VS Code workflow
 
-Use the view title controls to create a terminal or group at the tree root. Use a workspace or group context menu to create nested nodes. Every group and terminal has rename, move, and delete actions. Deleting a group confirms the descendant count and closes running terminals in that subtree.
+Select a local root, global root, or group, then use the view title controls to create a terminal or group at that location. `+` always means terminal, and `new folder` always means group. The selected destination is repeated in the create prompt. The same create actions are available inline and from root and group context menus.
+
+Terminal rows expose open, restart, stop, and delete controls. Stop closes the native terminal while preserving its entry for a later restart. Delete removes the entry after confirmation. Groups and terminals also provide rename, move, and delete actions from their context menus. Deleting a group confirms the descendant count and closes running terminals in that subtree.
 
 Opening a terminal can also add its resolved working directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. Configure `TreeTY: Explorer Directory Sync` as `never`, `prompt`, or `always`. You can also use `TreeTY: Add Directory to VS Code Workspace` from any terminal's context menu.
 
-`TreeTY: Global Tree Visibility` controls whether the global tree is used only as a fallback, is always shown alongside workspace trees, or is hidden when folders are open. Empty VS Code windows always show the global tree.
+`TreeTY: Global Tree Visibility` shows the global root alongside local roots by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
 
 Adding the first folder to an empty VS Code window can restart the extension host. Native terminal persistence lets TreeTY reattach the session afterward.
 

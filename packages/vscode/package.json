@@ -129,11 +129,11 @@
             "never"
           ],
           "enumDescriptions": [
-            "Show the global tree once when an open folder does not have a local TreeTY configuration.",
-            "Show the global tree alongside configured workspace trees.",
-            "Do not use the global tree as a fallback when folders are open."
+            "Show an existing global tree when at least one open folder does not have a local TreeTY configuration.",
+            "Always show the global tree alongside local workspace trees so both scopes can be managed.",
+            "Hide the global tree when folders are open."
           ],
-          "default": "fallback",
+          "default": "always",
           "description": "Controls when the global terminal tree appears in windows with open folders. Empty VS Code windows always show the global tree."
         }
       }
@@ -191,11 +191,6 @@
           "command": "treety.openConfig",
           "when": "view == treety.terminals",
           "group": "navigation@9"
-        },
-        {
-          "command": "treety.initializeWorkspace",
-          "when": "view == treety.terminals",
-          "group": "navigation@10"
         }
       ],
       "view/item/context": [
@@ -215,6 +210,11 @@
           "group": "inline@3"
         },
         {
+          "command": "treety.deleteNode",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "inline@4"
+        },
+        {
           "command": "treety.openConfig",
           "when": "view == treety.terminals && viewItem =~ /^treetyWorkspace\\.configured/",
           "group": "navigation@1"
@@ -232,7 +232,17 @@
         {
           "command": "treety.createTerminal",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
-          "group": "inline@4"
+          "group": "inline@1"
+        },
+        {
+          "command": "treety.createGroup",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
+          "group": "inline@2"
+        },
+        {
+          "command": "treety.deleteNode",
+          "when": "view == treety.terminals && viewItem == treetyGroup",
+          "group": "inline@3"
         },
         {
           "command": "treety.createGroup",
