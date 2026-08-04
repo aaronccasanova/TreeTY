@@ -146,19 +146,19 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-All unpublished packages stay at version `0.0.0`. Create the stable local VSIX path with:
+Unpublished npm packages stay at version `0.0.0`. The VS Code extension follows its independent Marketplace version. Create the stable local VSIX path with:
 
 ```sh
 pnpm package
 ```
 
-This writes `artifacts/treety-0.0.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+This writes `artifacts/treety-0.1.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-0.0.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+For example, this can create `artifacts/treety-0.1.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
 
 Build and force-install a fresh snapshot in one step with:
 
@@ -166,4 +166,10 @@ Build and force-install a fresh snapshot in one step with:
 pnpm install:snapshot
 ```
 
-Snapshot timestamps identify local artifacts only. Marketplace pre-releases and release versioning will be handled by the distribution pipeline.
+Snapshot timestamps identify local artifacts only. Build a Marketplace pre-release with:
+
+```sh
+pnpm package:pre-release
+```
+
+VS Code pre-releases use odd minor versions (`0.1.x`, `0.3.x`, etc). Stable releases use even minor versions (`0.2.x`, `0.4.x`, etc). Pre-release status is stored in the VSIX manifest rather than a SemVer suffix.

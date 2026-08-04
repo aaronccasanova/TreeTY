@@ -9,6 +9,7 @@
     "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety run build",
     "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter treety run check",
     "package": "node scripts/package-vscode-extension.mjs",
+    "package:pre-release": "node scripts/package-vscode-extension.mjs --pre-release",
     "package:snapshot": "node scripts/package-vscode-extension.mjs --snapshot",
     "install:snapshot": "node scripts/package-vscode-extension.mjs --snapshot --install",
     "package:cli": "pnpm --filter @treety/cli pack --pack-destination ../..",

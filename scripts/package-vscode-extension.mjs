@@ -18,29 +18,33 @@ function main() {
   );
   const extensionPackageConfig = JSON.parse(extensionPackageFileContent);
   const shouldCreateSnapshot = process.argv.includes("--snapshot");
+  const shouldCreatePreRelease = process.argv.includes("--pre-release");
   const shouldInstallExtension = process.argv.includes("--install");
+
+  if (shouldCreateSnapshot && shouldCreatePreRelease) {
+    throw new Error("A VSIX cannot be both a local snapshot and a pre-release.");
+  }
+
   const artifactFileName = buildArtifactFileName(
     extensionPackageConfig.version,
     shouldCreateSnapshot,
+    shouldCreatePreRelease,
   );
   const artifactFilePath = path.join(artifactDirPath, artifactFileName);
+  const packageCommandArguments = [
+    "exec",
+    "vsce",
+    "package",
+    "--no-dependencies",
+    ...(shouldCreatePreRelease ? ["--pre-release"] : []),
+    "--out",
+    artifactFilePath,
+  ];
 
   fs.mkdirSync(artifactDirPath, { recursive: true });
 
   runCommand("pnpm", ["run", "build"], extensionDirPath);
-  runCommand(
-    "pnpm",
-    [
-      "exec",
-      "vsce",
-      "package",
-      "--no-dependencies",
-      "--allow-missing-repository",
-      "--out",
-      artifactFilePath,
-    ],
-    extensionDirPath,
-  );
+  runCommand("pnpm", packageCommandArguments, extensionDirPath);
 
   console.log(`Created ${artifactFilePath}`);
 
@@ -59,10 +63,16 @@ function main() {
   );
 }
 
-function buildArtifactFileName(extensionVersion, shouldCreateSnapshot) {
-  if (!shouldCreateSnapshot) {
-    return `treety-${extensionVersion}.vsix`;
+function buildArtifactFileName(
+  extensionVersion,
+  shouldCreateSnapshot,
+  shouldCreatePreRelease,
+) {
+  if (shouldCreatePreRelease) {
+    return `treety-${extensionVersion}-pre-release.vsix`;
   }
+
+  if (!shouldCreateSnapshot) return `treety-${extensionVersion}.vsix`;
 
   const snapshotTimestamp = formatSnapshotTimestamp(new Date());
 
