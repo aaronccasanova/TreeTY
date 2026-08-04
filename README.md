@@ -38,6 +38,18 @@ packages/vscode
 
 The core package controls behavior. A host adapter controls rendering, process creation, persistence discovery, and user interaction. This boundary leaves room for another IDE, an external-terminal bridge, or a standalone application without changing the tree model.
 
+## Agent skill
+
+TreeTY includes an agent skill for managing terminal trees through the CLI, understanding how CLI changes synchronize with VS Code, and building integrations with the core package.
+
+Install it from this repository with the open `skills` CLI:
+
+```sh
+npx skills add aaronccasanova/TreeTY --skill treety
+```
+
+Add `--global` to make the skill available across projects. The installer can target Codex, Claude Code, Cursor, and other compatible agents.
+
 ## CLI
 
 The publishable `@treety/cli` package wraps the core management API and exposes the `treety` executable.
