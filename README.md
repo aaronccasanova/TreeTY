@@ -5,14 +5,16 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 ## MVP behavior
 
 - Render nested groups and terminal leaves in a dedicated Activity Bar view.
-- Inherit directories, environment variables, shell settings, and restart policies through the tree.
+- Inherit working directories, project directories, environment variables, shell settings, and restart policies through the tree.
+- Keep opaque stable node IDs independent from human-readable names.
+- Store optional freeform JSON metadata on any group or terminal.
 - Create native VS Code terminals lazily and reveal an existing terminal when its leaf is selected.
 - Reattach terminals revived by VS Code instead of launching duplicates.
 - Track stopped, starting, idle, running, and failed states.
 - Support interactive shells and direct startup commands.
 - Load workspace trees from `.treety/tree.json` alongside a separately manageable global tree.
 - Manage tree structure from either the VS Code tree or the `treety` command.
-- Optionally add terminal working directories to VS Code Explorer and Source Control.
+- Optionally add explicitly configured project directories to VS Code Explorer and Source Control.
 
 ## Architecture
 
@@ -27,7 +29,7 @@ packages/core
 packages/cli
   local and global configuration discovery
   group and terminal creation
-  list, rename, move, and remove commands
+  list, inspect, configure, rename, move, metadata, and remove commands
 
 packages/vscode
   TreeDataProvider adapter
@@ -71,15 +73,19 @@ Once the executable is available, the management workflow is:
 
 ```sh
 treety init
-treety add group "Services" --cwd services
-treety add terminal "API server" --parent services --cwd api -- pnpm dev
+treety add group "Services" --id services --cwd services --project-dir ..
+treety add terminal "API server" --id api-server --parent services --cwd api -- pnpm dev
 treety list
 treety rename api-server "Development API"
+treety configure api-server --project-dir ../.. --env PORT=3000
+treety metadata set api-server '{"owner":"platform","tags":["api"]}'
 treety move api-server --root
 treety remove api-server --yes
 ```
 
 Commands use `.treety/tree.json` in the current workspace. If there is no local tree, TreeTY falls back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`. Pass `--global` to target the global tree explicitly, or `--config <path>` to target any configuration file.
+
+Node IDs are unique within one configuration. A persistent node is identified by its configuration file path and node ID together, so local, global, and custom trees may reuse the same ID without conflict.
 
 ## Configuration
 
@@ -101,6 +107,10 @@ Example configuration:
       "id": "services",
       "name": "Services",
       "cwd": "services",
+      "projectDir": "..",
+      "metadata": {
+        "owner": "platform"
+      },
       "children": [
         {
           "kind": "terminal",
@@ -124,22 +134,30 @@ Example configuration:
 }
 ```
 
-Relative `cwd` values resolve from the nearest ancestor. Terminal leaves without `command` use the user's default VS Code terminal profile. Command leaves launch the configured executable directly with its argument array.
+Relative `cwd` values resolve from the nearest ancestor. Terminal leaves without `command` use the host's default interactive shell. Command leaves launch the configured executable directly with its argument array.
+
+`projectDir` is an optional project root that inherits independently from `cwd`. An absolute value remains unchanged. A relative value resolves from the node's resolved working directory. Host adapters can use this value for project-level integrations without assuming that a terminal starts at the project root.
+
+Node IDs are stable machine identities. TreeTY generates opaque UUIDs for new nodes unless `--id` supplies an explicit value. Renaming a node changes only its human-readable name. Existing name-based IDs remain valid.
+
+`metadata` accepts any JSON value and does not inherit. TreeTY treats it as an opaque value and replaces it atomically rather than applying ambiguous deep-merge rules.
 
 `restartPolicy` supports:
 
-- `manual` (default): Recover a native persisted session when available. Otherwise, wait for the user to select the leaf.
-- `onOpen`: Recover the session or launch it when the workspace opens.
+- `manual` (default): Recover a hosted session when available. Otherwise, wait for an explicit open or restart request.
+- `onOpen`: Recover the session or launch it when the host opens the tree.
 
 Environment values inherit and merge. A `null` value removes the variable from the launched terminal environment.
+
+Host adapters inject a standard terminal context built by `@treety/core`: `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID`. The CLI uses this context to target the active config and leaf without positional arguments. Explicit `--global`, `--config`, positional IDs, and `--node` selectors take precedence. `TREETY_SESSION_ID` identifies one runtime terminal instance and can change when that terminal is recreated; `TREETY_NODE_ID` remains stable. Metadata in the environment is a launch-time snapshot, while `treety metadata get` reads the current configuration.
 
 ## VS Code workflow
 
 Select a local root, global root, or group, then use the view title controls to create a terminal or group at that location. `+` always means terminal, and `new folder` always means group. The selected destination is repeated in the create prompt. The same create actions are available inline and from root and group context menus.
 
-Terminal rows expose open, restart, stop, and delete controls. Stop closes the native terminal while preserving its entry for a later restart. Delete removes the entry after confirmation. Groups and terminals also provide rename, move, and delete actions from their context menus. Deleting a group confirms the descendant count and closes running terminals in that subtree.
+Terminal rows expose open, restart, stop, and delete controls. Stop closes the native terminal while preserving its entry for a later restart. Delete removes the entry after confirmation. Groups and terminals also provide configure, rename, move, and delete actions from their context menus. Configure edits working directory, project directory, environment, metadata, and restart policy without opening JSON. Deleting a group confirms the descendant count and closes running terminals in that subtree. A valid CLI or file edit that removes a leaf also closes its matching live terminal.
 
-Opening a terminal can also add its resolved working directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. Configure `TreeTY: Explorer Directory Sync` as `never`, `prompt`, or `always`. You can also use `TreeTY: Add Directory to VS Code Workspace` from any terminal's context menu.
+Opening a terminal can also add its explicitly configured project directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. `TreeTY: Explorer Directory Sync` defaults to `never` and also supports `prompt` or `always`. The terminal context menu exposes `TreeTY: Add Project Directory to VS Code Workspace...` only when a project directory is configured. The confirmation shows the exact absolute path before changing the workspace.
 
 `TreeTY: Global Tree Visibility` shows the global root first, followed by local roots, by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
 
@@ -158,19 +176,19 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-Unpublished npm packages stay at version `0.0.0`. The VS Code extension follows its independent Marketplace version. Create the stable local VSIX path with:
+The core library and CLI are versioned independently from the VS Code extension. The current package versions are `@treety/core@0.0.2`, `@treety/cli@0.0.2`, and `TreeTY.treety@0.1.1`. Create the stable local VSIX path with:
 
 ```sh
 pnpm package
 ```
 
-This writes `artifacts/treety-0.1.0.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+This writes `artifacts/treety-0.1.1.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-0.1.0-snapshot.20260803T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+For example, this can create `artifacts/treety-0.1.1-snapshot.20260804T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
 
 Build and force-install a fresh snapshot in one step with:
 

@@ -48,6 +48,11 @@ export async function activate(
         treeTYController.renameNode(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.configureNode",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.configureNode(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
       "treety.moveNode",
       (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
     ),

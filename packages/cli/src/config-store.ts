@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
   formatTreeConfigContent,
   parseTreeConfigContent,
+  treeTYConfigFileEnvironmentName,
   TreeConfig,
 } from "@treety/core";
 
@@ -26,6 +27,13 @@ export async function resolveTreeConfigFilePath(
   const globalConfigFilePath = getGlobalConfigFilePath(options);
 
   if (options.useGlobal) return globalConfigFilePath;
+
+  const sessionConfigFileName =
+    options.environment[treeTYConfigFileEnvironmentName];
+
+  if (sessionConfigFileName) {
+    return path.resolve(options.currentDirPath, sessionConfigFileName);
+  }
 
   const workspaceConfigFilePath = path.join(
     options.currentDirPath,

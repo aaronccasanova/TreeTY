@@ -87,14 +87,17 @@ const resolvedTreeConfig: ResolvedTreeConfig = {
     },
     {
       kind: "terminal",
-      id: "agent",
-      name: "Agent",
+      id: "worker",
+      name: "Worker",
       cwd: "/workspace",
       env: {},
+      metadata: {
+        owner: "platform",
+      },
       restartPolicy: "onOpen",
       command: {
-        executable: "codex",
-        args: ["--full-auto"],
+        executable: "pnpm",
+        args: ["run", "worker"],
       },
     },
   ],
@@ -116,10 +119,13 @@ test.test("reattaches restored sessions and reveals them without duplication", a
   await treeTYEngine.openTerminal("shell");
 
   assert.equal(terminalHost.terminalLaunchRequests.length, 1);
-  assert.equal(terminalHost.terminalLaunchRequests[0]?.nodeId, "agent");
+  assert.equal(terminalHost.terminalLaunchRequests[0]?.nodeId, "worker");
+  assert.deepEqual(terminalHost.terminalLaunchRequests[0]?.metadata, {
+    owner: "platform",
+  });
   assert.deepEqual(terminalHost.revealedSessionIds, ["restored-shell"]);
   assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "idle");
-  assert.equal(treeTYEngine.getTerminalSessionState("agent").status, "running");
+  assert.equal(treeTYEngine.getTerminalSessionState("worker").status, "running");
 });
 
 test.test("marks non-zero terminal exits as failed", async () => {

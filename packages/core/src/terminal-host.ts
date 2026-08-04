@@ -1,5 +1,6 @@
 import {
   Disposable,
+  JsonValue,
   TerminalCommandConfig,
   TerminalEnvironment,
   TerminalShellConfig,
@@ -10,6 +11,7 @@ export interface TerminalLaunchRequest {
   name: string;
   cwd: string;
   env: TerminalEnvironment;
+  metadata?: JsonValue;
   shell?: TerminalShellConfig;
   command?: TerminalCommandConfig;
 }

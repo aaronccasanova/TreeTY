@@ -2,7 +2,7 @@
   "name": "treety",
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "TreeTY",
   "preview": true,
   "icon": "media/treety.png",
@@ -38,7 +38,7 @@
     "tree",
     "workspace",
     "microservices",
-    "agents"
+    "shells"
   ],
   "activationEvents": [
     "onView:treety.terminals",
@@ -85,6 +85,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "treety.configureNode",
+        "title": "TreeTY: Configure Node...",
+        "icon": "$(settings-gear)"
+      },
+      {
         "command": "treety.moveNode",
         "title": "TreeTY: Move",
         "icon": "$(type-hierarchy-sub)"
@@ -111,7 +116,7 @@
       },
       {
         "command": "treety.addTerminalDirectoryToWorkspace",
-        "title": "TreeTY: Add Directory to VS Code Workspace",
+        "title": "TreeTY: Add Project Directory to VS Code Workspace...",
         "icon": "$(folder-library)"
       }
     ],
@@ -136,12 +141,12 @@
             "always"
           ],
           "enumDescriptions": [
-            "Do not add terminal directories to the VS Code workspace automatically.",
-            "Ask before adding a terminal directory that is outside the current workspace.",
-            "Add terminal directories outside the current workspace when their terminals open."
+            "Do not add project directories to the VS Code workspace automatically.",
+            "Ask before adding a configured project directory that is outside the current workspace.",
+            "Add configured project directories outside the current workspace when their terminals open."
           ],
-          "default": "prompt",
-          "description": "Controls whether opening a TreeTY terminal adds its working directory to the VS Code workspace, making it available to Explorer and Source Control. VS Code may reload the extension host when the first folder is added."
+          "default": "never",
+          "description": "Controls whether opening a TreeTY terminal adds its configured project directory to the VS Code workspace, making it available to Explorer and Source Control. VS Code may reload the extension host when the first folder is added."
         },
         "treety.globalTreeVisibility": {
           "type": "string",
@@ -282,18 +287,23 @@
           "group": "modification@1"
         },
         {
-          "command": "treety.moveNode",
+          "command": "treety.configureNode",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
           "group": "modification@2"
         },
         {
-          "command": "treety.deleteNode",
+          "command": "treety.moveNode",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
           "group": "modification@3"
         },
         {
+          "command": "treety.deleteNode",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
+          "group": "modification@4"
+        },
+        {
           "command": "treety.addTerminalDirectoryToWorkspace",
-          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\..*\\.project$/",
           "group": "workspace@1"
         }
       ],
@@ -312,6 +322,10 @@
         },
         {
           "command": "treety.renameNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.configureNode",
           "when": "false"
         },
         {

@@ -1,6 +1,6 @@
 ---
 name: treety
-description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, rename, move, or remove TreeTY groups and terminal leaves; coordinate independent terminal or agent sessions through @treety/cli; work with local .treety/tree.json or global TreeTY configuration; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
+description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, rename, move, annotate, or remove TreeTY groups and terminal leaves; coordinate independent terminal or agent sessions through @treety/cli; work with local .treety/tree.json or global TreeTY configuration; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
 ---
 
 # TreeTY
@@ -18,10 +18,10 @@ Read only the references needed for the current task.
 ## Follow the management workflow
 
 1. Select a stable CLI runner using the guidance in `references/cli.md`.
-2. Resolve the exact configuration path before making changes.
-3. Inspect the current tree and use node IDs for parent, move, rename, and remove operations.
+2. Resolve the exact configuration path before making changes. Inside a TreeTY terminal, inspect `treety current` first.
+3. Inspect the current tree and use opaque node IDs for parent, move, rename, configure, metadata, and remove operations.
 4. Apply the smallest requested mutation through the CLI. Do not edit JSON manually when the CLI supports the operation.
-5. List the resulting tree and confirm the intended scope, hierarchy, working directories, and restart policies.
+5. List the resulting tree and confirm the intended scope, hierarchy, working directories, project directories, metadata, and restart policies.
 6. Explain whether the result creates only a persistent terminal definition or also starts a VS Code terminal.
 
 Treat `remove --yes` and `init --force` as destructive. Confirm the resolved configuration path and exact target before running either command. Obtain user authorization when the requested work does not already clearly include removal or replacement.

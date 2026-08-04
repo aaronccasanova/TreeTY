@@ -9,9 +9,10 @@ import {
   removeTreeNode,
   renameTreeNode,
   TreeNodeOperationError,
+  updateTreeNode,
 } from "./tree-editor";
 
-test.test("adds nested groups and terminals with stable generated IDs", () => {
+test.test("adds nested groups and terminals with opaque stable IDs", () => {
   const emptyTreeConfig = createEmptyTreeConfig();
   const treeConfigWithGroup = addTreeGroup(emptyTreeConfig, {
     name: "API services",
@@ -19,7 +20,7 @@ test.test("adds nested groups and terminals with stable generated IDs", () => {
   });
   const treeConfigWithTerminal = addTreeTerminal(treeConfigWithGroup, {
     name: "API services",
-    parentId: "api-services",
+    parentId: treeConfigWithGroup.tree[0]?.id,
     cwd: "api",
     command: {
       executable: "pnpm",
@@ -34,19 +35,52 @@ test.test("adds nested groups and terminals with stable generated IDs", () => {
     assert.fail("Expected an API services group.");
   }
 
-  assert.equal(apiServicesGroup.id, "api-services");
-  assert.equal(apiServicesGroup.children[0]?.id, "api-services-2");
-  assert.deepEqual(apiServicesGroup.children[0], {
-    kind: "terminal",
-    id: "api-services-2",
-    name: "API services",
-    cwd: "api",
-    command: {
-      executable: "pnpm",
-      args: ["dev"],
+  assert.match(apiServicesGroup.id, /^[0-9a-f-]{36}$/);
+  assert.match(apiServicesGroup.children[0]?.id ?? "", /^[0-9a-f-]{36}$/);
+  assert.notEqual(apiServicesGroup.id, apiServicesGroup.children[0]?.id);
+  assert.equal(apiServicesGroup.children[0]?.name, "API services");
+  assert.deepEqual(emptyTreeConfig.tree, []);
+});
+
+test.test("updates node configuration and metadata without changing identity", () => {
+  const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
+    id: "shell",
+    name: "Shell",
+    env: {
+      KEEP: "yes",
+      REMOVE: "yes",
     },
   });
-  assert.deepEqual(emptyTreeConfig.tree, []);
+  const updatedTreeConfig = updateTreeNode(treeConfig, {
+    nodeId: "shell",
+    cwd: "packages/cli",
+    env: {
+      delete: ["REMOVE"],
+      set: {
+        ADDED: "yes",
+      },
+    },
+    metadata: {
+      owner: "platform",
+      tags: ["review", "cli"],
+    },
+    metadataAction: "replace",
+    projectDir: "../..",
+  });
+  const shellNode = updatedTreeConfig.tree[0];
+
+  assert.equal(shellNode?.id, "shell");
+  assert.equal(shellNode?.cwd, "packages/cli");
+  assert.equal(shellNode?.projectDir, "../..");
+  assert.deepEqual(shellNode?.env, {
+    KEEP: "yes",
+    ADDED: "yes",
+  });
+  assert.deepEqual(shellNode?.metadata, {
+    owner: "platform",
+    tags: ["review", "cli"],
+  });
+  assert.equal(treeConfig.tree[0]?.cwd, undefined);
 });
 
 test.test("renames, moves, and removes tree nodes without mutating input", () => {

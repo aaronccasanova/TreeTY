@@ -12,8 +12,8 @@
     "package:pre-release": "node scripts/package-vscode-extension.mjs --pre-release",
     "package:snapshot": "node scripts/package-vscode-extension.mjs --snapshot",
     "install:snapshot": "node scripts/package-vscode-extension.mjs --snapshot --install",
-    "package:cli": "pnpm --filter @treety/cli pack --pack-destination ../..",
-    "package:core": "pnpm --filter @treety/core pack --pack-destination ../..",
+    "package:cli": "pnpm --filter @treety/cli pack --pack-destination artifacts",
+    "package:core": "pnpm --filter @treety/core pack --pack-destination artifacts",
     "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test"
   },
   "devDependencies": {

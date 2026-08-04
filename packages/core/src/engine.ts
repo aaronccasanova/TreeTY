@@ -131,6 +131,7 @@ export class TreeTYEngine implements Disposable {
         name: terminalNode.name,
         cwd: terminalNode.cwd,
         env: terminalNode.env,
+        metadata: terminalNode.metadata,
         shell: terminalNode.shell,
         command: terminalNode.command,
       });

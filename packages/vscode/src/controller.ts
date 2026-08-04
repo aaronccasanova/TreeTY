@@ -6,6 +6,8 @@ import {
   addTreeTerminal,
   createEmptyTreeConfig,
   formatTreeConfigContent,
+  getTreeNode,
+  JsonValue,
   moveTreeNode,
   parseTreeConfigContent,
   removeTreeNode,
@@ -14,7 +16,9 @@ import {
   ResolvedTreeNode,
   TerminalSessionState,
   TreeConfig,
+  TreeNodeConfig,
   TreeTYEngine,
+  updateTreeNode,
 } from "@treety/core";
 import * as vscode from "vscode";
 
@@ -216,6 +220,73 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
+  public async configureNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
+    const treeNodeConfig = getTreeNode(
+      nodeTreeEntry.workspaceModel.treeConfig,
+      nodeTreeEntry.treeNode.id,
+    );
+
+    if (!treeNodeConfig) {
+      throw new Error(
+        `Tree node "${nodeTreeEntry.treeNode.id}" does not exist.`,
+      );
+    }
+
+    const configurationItem = await vscode.window.showQuickPick(
+      [
+        {
+          label: "$(folder-active) Working directory",
+          description: treeNodeConfig.cwd ?? "Inherited",
+          propertyName: "cwd",
+        },
+        {
+          label: "$(root-folder) Project directory",
+          description: treeNodeConfig.projectDir ?? "Not configured here",
+          propertyName: "projectDir",
+        },
+        {
+          label: "$(refresh) Restart policy",
+          description: treeNodeConfig.restartPolicy ?? "Inherited",
+          propertyName: "restartPolicy",
+        },
+        {
+          label: "$(symbol-variable) Environment",
+          description: treeNodeConfig.env
+            ? `${Object.keys(treeNodeConfig.env).length} override(s)`
+            : "Inherited",
+          propertyName: "env",
+        },
+        {
+          label: "$(json) Metadata",
+          description:
+            treeNodeConfig.metadata === undefined
+              ? "Not configured"
+              : "Freeform JSON",
+          propertyName: "metadata",
+        },
+      ] as const,
+      {
+        title: `Configure ${treeNodeConfig.name}`,
+        placeHolder: "Choose a property to edit",
+      },
+    );
+
+    if (!configurationItem) return;
+
+    const treeConfig = await this.getConfiguredTreeNodeUpdate(
+      nodeTreeEntry,
+      treeNodeConfig,
+      configurationItem.propertyName,
+    );
+
+    if (!treeConfig) return;
+
+    await this.writeWorkspaceTreeConfig(
+      nodeTreeEntry.workspaceModel,
+      treeConfig,
+    );
+  }
+
   public async moveNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     const moveDestinationQuickPickItems = getMoveDestinationQuickPickItems(
       nodeTreeEntry,
@@ -295,7 +366,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
       nodeTreeEntry.treeNode.id,
     );
-    await this.syncTerminalDirectory(nodeTreeEntry, false);
+    await this.syncProjectDirectory(nodeTreeEntry, false);
   }
 
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -304,7 +375,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
       nodeTreeEntry.treeNode.id,
     );
-    await this.syncTerminalDirectory(nodeTreeEntry, false);
+    await this.syncProjectDirectory(nodeTreeEntry, false);
   }
 
   public async addTerminalDirectoryToWorkspace(
@@ -312,7 +383,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   ): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
-    await this.syncTerminalDirectory(nodeTreeEntry, true);
+    await this.syncProjectDirectory(nodeTreeEntry, true);
   }
 
   public async stopTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -398,6 +469,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     this.workspaceModels = nextWorkspaceModels;
 
+    closeRemovedTerminalSessions(previousWorkspaceModels, nextWorkspaceModels);
+
     for (const previousWorkspaceModel of previousWorkspaceModels) {
       if (previousWorkspaceModel.kind === "configured") {
         previousWorkspaceModel.treeTYEngine.dispose();
@@ -440,6 +513,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       );
       const vscodeTerminalHost = new VscodeTerminalHost(
         workspaceModelLocation.id,
+        workspaceModelLocation.configFileUri.fsPath,
+        workspaceModelLocation.configSource,
       );
       const treeTYEngine = new TreeTYEngine(
         resolvedTreeConfig,
@@ -551,37 +626,58 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await this.queueWorkspaceReload();
   }
 
-  private async syncTerminalDirectory(
+  private async syncProjectDirectory(
     nodeTreeEntry: NodeTreeEntry,
     forceSync: boolean,
   ): Promise<void> {
     const explorerDirectorySyncMode = vscode.workspace
       .getConfiguration("treety")
-      .get<ExplorerDirectorySyncMode>("explorerDirectorySync", "prompt");
+      .get<ExplorerDirectorySyncMode>("explorerDirectorySync", "never");
 
     if (!forceSync && explorerDirectorySyncMode === "never") return;
 
-    const terminalDirUri = getTerminalDirUri(nodeTreeEntry);
+    const projectDirUri = getProjectDirUri(nodeTreeEntry);
 
-    if (getUriIsInWorkspace(terminalDirUri)) return;
-
-    const terminalDirectoryExists = await getDirectoryExists(terminalDirUri);
-
-    if (!terminalDirectoryExists) {
+    if (!projectDirUri) {
       if (forceSync) {
-        void vscode.window.showWarningMessage(
-          `TreeTY directory does not exist: ${terminalDirUri.fsPath}`,
+        void vscode.window.showInformationMessage(
+          `Configure a project directory for "${nodeTreeEntry.treeNode.name}" before adding it to the VS Code workspace.`,
         );
       }
 
       return;
     }
 
-    if (!forceSync && explorerDirectorySyncMode === "prompt") {
+    if (getUriIsInWorkspace(projectDirUri)) {
+      if (forceSync) {
+        void vscode.window.showInformationMessage(
+          `${formatDisplayPath(projectDirUri.fsPath)} is already in the VS Code workspace.`,
+        );
+      }
+
+      return;
+    }
+
+    const projectDirectoryExists = await getDirectoryExists(projectDirUri);
+
+    if (!projectDirectoryExists) {
+      if (forceSync) {
+        void vscode.window.showWarningMessage(
+          `TreeTY project directory does not exist: ${projectDirUri.fsPath}`,
+        );
+      }
+
+      return;
+    }
+
+    if (forceSync || explorerDirectorySyncMode === "prompt") {
       const confirmation = await vscode.window.showInformationMessage(
-        `Add "${path.basename(terminalDirUri.fsPath)}" to the VS Code workspace?`,
+        `Add this project directory to the VS Code workspace?`,
+        {
+          modal: true,
+          detail: projectDirUri.fsPath,
+        },
         "Add folder",
-        "Not now",
       );
 
       if (confirmation !== "Add folder") return;
@@ -591,14 +687,103 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     const workspaceUpdated = vscode.workspace.updateWorkspaceFolders(
       workspaceFolderCount,
       null,
-      { uri: terminalDirUri },
+      { uri: projectDirUri },
     );
 
     if (!workspaceUpdated) {
       throw new Error(
-        `Could not add "${terminalDirUri.fsPath}" to the VS Code workspace.`,
+        `Could not add "${projectDirUri.fsPath}" to the VS Code workspace.`,
       );
     }
+  }
+
+  private async getConfiguredTreeNodeUpdate(
+    nodeTreeEntry: NodeTreeEntry,
+    treeNodeConfig: TreeNodeConfig,
+    propertyName: "cwd" | "env" | "metadata" | "projectDir" | "restartPolicy",
+  ): Promise<TreeConfig | undefined> {
+    if (propertyName === "restartPolicy") {
+      const restartPolicyItem = await vscode.window.showQuickPick(
+        [
+          { label: "Inherit", restartPolicy: null },
+          { label: "Manual", restartPolicy: "manual" as const },
+          { label: "On open", restartPolicy: "onOpen" as const },
+        ],
+        {
+          title: `Restart policy for ${treeNodeConfig.name}`,
+        },
+      );
+
+      if (!restartPolicyItem) return undefined;
+
+      return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
+        nodeId: treeNodeConfig.id,
+        restartPolicy: restartPolicyItem.restartPolicy,
+      });
+    }
+
+    if (propertyName === "env" || propertyName === "metadata") {
+      const currentJsonValue =
+        propertyName === "env" ? treeNodeConfig.env : treeNodeConfig.metadata;
+      const jsonContent = await vscode.window.showInputBox({
+        title: `${propertyName === "env" ? "Environment" : "Metadata"} for ${treeNodeConfig.name}`,
+        prompt:
+          propertyName === "env"
+            ? "Enter a JSON object of environment overrides. Use null to unset a variable. Leave empty to inherit."
+            : "Enter any JSON value. Leave empty to remove metadata.",
+        value:
+          currentJsonValue === undefined
+            ? ""
+            : JSON.stringify(currentJsonValue),
+        validateInput: (inputContent) =>
+          validateNodeJsonContent(inputContent, propertyName),
+      });
+
+      if (jsonContent === undefined) return undefined;
+
+      if (propertyName === "metadata") {
+        return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
+          nodeId: treeNodeConfig.id,
+          metadata:
+            jsonContent.trim() === ""
+              ? undefined
+              : (JSON.parse(jsonContent) as JsonValue),
+          metadataAction:
+            jsonContent.trim() === "" ? "remove" : "replace",
+        });
+      }
+
+      const environmentNames = Object.keys(treeNodeConfig.env ?? {});
+      const terminalEnvironment =
+        jsonContent.trim() === ""
+          ? undefined
+          : (JSON.parse(jsonContent) as Record<string, string | null>);
+
+      return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
+        nodeId: treeNodeConfig.id,
+        env: {
+          delete: environmentNames,
+          set: terminalEnvironment,
+        },
+      });
+    }
+
+    const currentDirName = treeNodeConfig[propertyName];
+    const dirName = await vscode.window.showInputBox({
+      title: `${propertyName === "cwd" ? "Working" : "Project"} directory for ${treeNodeConfig.name}`,
+      prompt:
+        propertyName === "cwd"
+          ? "Relative paths resolve from the parent working directory. Leave empty to inherit."
+          : "Relative paths resolve from this node's working directory. Leave empty to inherit or remain unconfigured.",
+      value: currentDirName ?? "",
+    });
+
+    if (dirName === undefined) return undefined;
+
+    return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
+      nodeId: treeNodeConfig.id,
+      [propertyName]: dirName.trim() || null,
+    });
   }
 
   private async showConfigFile(configFileUri: vscode.Uri): Promise<void> {
@@ -817,14 +1002,98 @@ function getGroupDeletionConfirmationMessage(
   return `Delete "${groupName}" and its ${descendantCount} descendant${descendantCount === 1 ? "" : "s"}?`;
 }
 
-function getTerminalDirUri(nodeTreeEntry: NodeTreeEntry): vscode.Uri {
+function closeRemovedTerminalSessions(
+  previousWorkspaceModels: WorkspaceModel[],
+  nextWorkspaceModels: WorkspaceModel[],
+): void {
+  for (const previousWorkspaceModel of previousWorkspaceModels) {
+    if (previousWorkspaceModel.kind !== "configured") continue;
+
+    const nextWorkspaceModel = nextWorkspaceModels.find(
+      (workspaceModel) => workspaceModel.id === previousWorkspaceModel.id,
+    );
+
+    if (nextWorkspaceModel?.kind !== "configured") continue;
+
+    const nextTerminalNodeIds = new Set(
+      nextWorkspaceModel.resolvedTreeConfig.tree.flatMap((treeNode) =>
+        getTerminalNodeIds(treeNode),
+      ),
+    );
+    const previousTerminalNodeIds =
+      previousWorkspaceModel.resolvedTreeConfig.tree.flatMap((treeNode) =>
+        getTerminalNodeIds(treeNode),
+      );
+
+    for (const previousTerminalNodeId of previousTerminalNodeIds) {
+      if (nextTerminalNodeIds.has(previousTerminalNodeId)) continue;
+
+      previousWorkspaceModel.treeTYEngine.stopTerminal(previousTerminalNodeId);
+    }
+  }
+}
+
+function getProjectDirUri(nodeTreeEntry: NodeTreeEntry): vscode.Uri | undefined {
+  if (!nodeTreeEntry.treeNode.projectDir) return undefined;
+
   if (nodeTreeEntry.workspaceModel.workspaceDirUri.scheme === "file") {
-    return vscode.Uri.file(nodeTreeEntry.treeNode.cwd);
+    return vscode.Uri.file(nodeTreeEntry.treeNode.projectDir);
   }
 
   return nodeTreeEntry.workspaceModel.workspaceDirUri.with({
-    path: nodeTreeEntry.treeNode.cwd,
+    path: nodeTreeEntry.treeNode.projectDir,
   });
+}
+
+function formatDisplayPath(dirPath: string): string {
+  const homeDirPath = os.homedir();
+  const dirNameFromHome = path.relative(homeDirPath, dirPath);
+
+  if (dirNameFromHome === "") return "~";
+
+  if (
+    dirNameFromHome.startsWith("..") ||
+    path.isAbsolute(dirNameFromHome)
+  ) {
+    return dirPath;
+  }
+
+  return path.join("~", dirNameFromHome);
+}
+
+function validateNodeJsonContent(
+  jsonContent: string,
+  propertyName: "env" | "metadata",
+): string | undefined {
+  if (jsonContent.trim() === "") return undefined;
+
+  let jsonValue: unknown;
+
+  try {
+    jsonValue = JSON.parse(jsonContent);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  if (propertyName === "metadata") return undefined;
+
+  if (
+    typeof jsonValue !== "object" ||
+    jsonValue === null ||
+    Array.isArray(jsonValue)
+  ) {
+    return "Environment must be a JSON object.";
+  }
+
+  for (const [environmentName, environmentValue] of Object.entries(jsonValue)) {
+    if (typeof environmentValue === "string" || environmentValue === null) {
+      continue;
+    }
+
+    return `Environment value "${environmentName}" must be a string or null.`;
+  }
+
+  return undefined;
 }
 
 function getUriIsInWorkspace(uri: vscode.Uri): boolean {
@@ -884,23 +1153,14 @@ function getErrorMessage(error: unknown): string {
 }
 
 function getStarterConfigFileContent(): string {
-  const treeConfig = createEmptyTreeConfig();
-
-  return formatTreeConfigContent({
-    ...treeConfig,
-    tree: [
-      {
-        kind: "group",
-        id: "workspace",
-        name: "Workspace",
-        children: [
-          {
-            kind: "terminal",
-            id: "shell",
-            name: "Shell",
-          },
-        ],
-      },
-    ],
+  const treeConfigWithGroup = addTreeGroup(createEmptyTreeConfig(), {
+    name: "Workspace",
   });
+  const workspaceGroup = treeConfigWithGroup.tree[0];
+  const treeConfig = addTreeTerminal(treeConfigWithGroup, {
+    name: "Shell",
+    parentId: workspaceGroup?.id,
+  });
+
+  return formatTreeConfigContent(treeConfig);
 }

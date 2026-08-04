@@ -1,6 +1,7 @@
 import * as path from "node:path";
 
 import {
+  JsonValue,
   ResolvedTreeConfig,
   ResolvedTreeNode,
   RestartPolicy,
@@ -17,6 +18,7 @@ type UnknownRecord = Record<string, unknown>;
 interface ResolvedNodeDefaults {
   cwd: string;
   env: TerminalEnvironment;
+  projectDir?: string;
   shell?: TerminalShellConfig;
   restartPolicy: RestartPolicy;
 }
@@ -126,6 +128,13 @@ function parseTreeNodeConfig(
   nodeIds.add(treeNodeId);
 
   const treeNodeDefaults = parseTreeNodeDefaults(treeNodeRecord, treeNodeLocation);
+  const treeNodeMetadata =
+    treeNodeRecord.metadata === undefined
+      ? undefined
+      : parseJsonValue(
+          treeNodeRecord.metadata,
+          `${treeNodeLocation}.metadata`,
+        );
 
   if (treeNodeRecord.kind === "group") {
     const childNodeValues = getArray(
@@ -145,6 +154,7 @@ function parseTreeNodeConfig(
       kind: "group",
       id: treeNodeId,
       name: treeNodeName,
+      metadata: treeNodeMetadata,
       children,
     };
   }
@@ -160,6 +170,7 @@ function parseTreeNodeConfig(
     kind: "terminal",
     id: treeNodeId,
     name: treeNodeName,
+    metadata: treeNodeMetadata,
   };
 
   if (treeNodeRecord.command !== undefined) {
@@ -193,6 +204,13 @@ function parseTreeNodeDefaults(
     treeNodeDefaults.env = parseTerminalEnvironment(
       treeNodeDefaultsRecord.env,
       `${treeNodeDefaultsLocation}.env`,
+    );
+  }
+
+  if (treeNodeDefaultsRecord.projectDir !== undefined) {
+    treeNodeDefaults.projectDir = getRequiredString(
+      treeNodeDefaultsRecord.projectDir,
+      `${treeNodeDefaultsLocation}.projectDir`,
     );
   }
 
@@ -314,8 +332,10 @@ function resolveTreeNode(
     name: treeNodeConfig.name,
     cwd: treeNodeDefaults.cwd,
     env: treeNodeDefaults.env,
+    projectDir: treeNodeDefaults.projectDir,
     shell: treeNodeDefaults.shell,
     restartPolicy: treeNodeDefaults.restartPolicy,
+    metadata: treeNodeConfig.metadata,
     parentId,
   };
 
@@ -345,6 +365,9 @@ function resolveNodeDefaults(
   const cwd = nodeDefaults.cwd
     ? resolveDirPath(parentDefaults.cwd, nodeDefaults.cwd)
     : parentDefaults.cwd;
+  const projectDir = nodeDefaults.projectDir
+    ? resolveDirPath(cwd, nodeDefaults.projectDir)
+    : parentDefaults.projectDir;
 
   return {
     cwd,
@@ -352,9 +375,48 @@ function resolveNodeDefaults(
       ...parentDefaults.env,
       ...nodeDefaults.env,
     },
+    projectDir,
     shell: nodeDefaults.shell ?? parentDefaults.shell,
     restartPolicy: nodeDefaults.restartPolicy ?? parentDefaults.restartPolicy,
   };
+}
+
+function parseJsonValue(jsonValue: unknown, jsonValueLocation: string): JsonValue {
+  if (
+    jsonValue === null ||
+    typeof jsonValue === "boolean" ||
+    typeof jsonValue === "string"
+  ) {
+    return jsonValue;
+  }
+
+  if (typeof jsonValue === "number" && Number.isFinite(jsonValue)) {
+    return jsonValue;
+  }
+
+  if (Array.isArray(jsonValue)) {
+    return jsonValue.map((arrayValue, arrayValueIndex) =>
+      parseJsonValue(arrayValue, `${jsonValueLocation}[${arrayValueIndex}]`),
+    );
+  }
+
+  if (
+    typeof jsonValue === "object" &&
+    jsonValue !== null
+  ) {
+    const jsonObject: { [propertyName: string]: JsonValue } = {};
+
+    for (const [propertyName, propertyValue] of Object.entries(jsonValue)) {
+      jsonObject[propertyName] = parseJsonValue(
+        propertyValue,
+        `${jsonValueLocation}.${propertyName}`,
+      );
+    }
+
+    return jsonObject;
+  }
+
+  throw new TreeConfigError(`${jsonValueLocation} must be valid JSON data.`);
 }
 
 function resolveDirPath(parentDirPath: string, childDirName: string): string {

@@ -33,12 +33,14 @@ treety config path
 treety list
 ```
 
-The default scope behaves as follows:
+The scope precedence behaves as follows:
 
-1. Use `<current-directory>/.treety/tree.json` when it exists.
-2. Otherwise use `$XDG_CONFIG_HOME/treety/tree.json` when it exists.
-3. Otherwise use `~/.config/treety/tree.json` when it exists.
-4. If neither exists, resolve the local path and require `treety init` before other operations.
+1. Use an explicit `--config <path>`.
+2. Otherwise use `--global` when supplied.
+3. Otherwise use `TREETY_CONFIG_FILE` when running inside a hosted TreeTY terminal.
+4. Otherwise use `<current-directory>/.treety/tree.json` when it exists.
+5. Otherwise use `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json` when it exists.
+6. If neither exists, resolve the local path and require `treety init` before other operations.
 
 Override discovery with exactly one of:
 
@@ -48,6 +50,8 @@ treety config path --config /absolute/path/to/tree.json
 ```
 
 Use `--global` on every command intended for the global tree. Use `--config <path>` on every command intended for a custom file. Do not combine the two flags.
+
+Node IDs are unique within one configuration. Treat the config file path and node ID together as the persistent identity. Different local, global, or custom configs may contain the same node ID.
 
 Initialize a local or global tree:
 
@@ -74,71 +78,123 @@ treety list --json
 
 Use IDs shown in square brackets by the text view for later mutations.
 
+Inside a TreeTY terminal, inspect its exact config and node definition:
+
+```sh
+treety current
+treety show
+```
+
+`TREETY_NODE_ID` supplies the default node target. A positional node ID or `--node <node-id>` takes precedence. Outside a TreeTY terminal, pass a node ID explicitly.
+`treety current` also reports the config source and `TREETY_SESSION_ID` when the host provides them. The session ID identifies the runtime terminal instance and can change when the terminal is recreated. The node ID remains stable.
+
 ## Add groups and terminals
 
 Add a root group:
 
 ```sh
-treety add group "Services" --id services --cwd services
+treety add group "Services" --cwd services
 ```
 
 Add a nested group:
 
 ```sh
-treety add group "Experiments" --parent services --cwd experiments
+treety add group "Experiments" --parent <services-id> --cwd experiments
 ```
 
 Add an interactive terminal leaf:
 
 ```sh
-treety add terminal "API shell" --parent services --cwd api
+treety add terminal "API shell" --parent <services-id> --cwd api
 ```
 
 Add a terminal leaf with a startup command. Everything after `--` becomes the executable and its argument array; it does not run during the CLI mutation:
 
 ```sh
-treety add terminal "API server" --parent services --cwd api -- pnpm dev
+treety add terminal "API server" --parent <services-id> --cwd api -- pnpm dev
 ```
 
-Add a terminal that VS Code should launch when it reloads the changed tree:
+Add a terminal that a host should launch when it opens the changed tree:
 
 ```sh
-treety add terminal "Research agent" \
-  --parent agents \
-  --cwd research \
+treety add terminal "Background worker" \
+  --parent <services-id> \
+  --cwd worker \
   --restart-policy onOpen \
-  -- codex
+  -- pnpm run worker
 ```
 
-Without `--id`, TreeTY derives a unique lowercase hyphenated ID from the name. Prefer explicit IDs in automation when later commands need a predictable handle.
+Without `--id`, TreeTY generates an opaque UUID that remains stable across renames and moves. Capture the ID printed by `add` or read it from `list`. Use `--id` only when the workflow genuinely needs an externally chosen identifier.
 
 Node options inherit through the tree:
 
 - `--cwd <path>` sets a working directory relative to the nearest inherited directory unless absolute.
+- `--project-dir <path>` sets an optional project root. An absolute value remains unchanged; a relative value resolves from that node's resolved working directory. It inherits independently from `cwd` so project integrations do not need to assume that the terminal starts at the project root.
 - `--env <NAME=value>` adds or overrides an environment value and can repeat.
 - `--unset-env <NAME>` removes an inherited value and can repeat.
 - `--shell <path>` selects a shell executable for interactive terminals.
 - `--shell-arg <value>` adds a shell argument, can repeat, and requires `--shell`.
 - `--restart-policy <manual|onOpen>` controls lazy or automatic launch behavior.
+- `--metadata <json>` stores an optional freeform JSON value on the node without inheritance.
 
 Group nodes accept the same options and pass their resolved defaults to descendants. A terminal startup command takes precedence over its inherited shell configuration.
 
 ## Rename, move, and remove nodes
 
 ```sh
-treety rename api-server "Development API"
-treety move api-server --parent experiments
-treety move api-server --root
+treety rename <node-id> "Development API"
+treety move <node-id> --parent <experiments-id>
+treety move <node-id> --root
 ```
 
 Removing a group also removes all descendants:
 
 ```sh
-treety remove api-server --yes
+treety remove <node-id> --yes
 ```
+
+Inside the target leaf, omit the ID or use `--node`:
+
+```sh
+treety rename "PR review"
+treety move --parent <reviews-id>
+treety remove --yes
+```
+
+## Configure nodes and metadata
+
+Change node-owned settings without replacing inherited defaults:
+
+```sh
+treety configure <node-id> \
+  --cwd packages/cli \
+  --project-dir ../.. \
+  --env MODE=review \
+  --unset-env DEBUG \
+  --restart-policy manual
+```
+
+Use `--clear-cwd`, `--clear-project-dir`, `--clear-shell`, or `--clear-restart-policy` to restore inheritance. Use `--delete-env <NAME>` to remove a node override; `--unset-env <NAME>` stores `null` and removes an inherited or host environment value when the terminal launches.
+
+Metadata accepts any JSON value and is replaced atomically:
+
+```sh
+treety metadata get <node-id>
+treety metadata set <node-id> '{"owner":"platform","tags":["review"]}'
+treety metadata clear <node-id>
+```
+
+Target the same operations in another config explicitly:
+
+```sh
+treety metadata set <node-id> '{"owner":"platform"}' --global
+treety metadata set <node-id> '{"owner":"platform"}' --config /absolute/path/to/tree.json
+```
+
+Do not assume deep-merge behavior. To change part of an object, read the current value, transform the JSON explicitly (for example with `jq`), and set the complete result. Inside the target leaf, omit `<node-id>`.
 
 Before removal, resolve the scope, inspect the tree, verify the exact ID, and obtain any required authorization. List the tree again after every mutation.
 
 ## Understand current limits
 
-The CLI writes configuration atomically. It does not host terminal processes or control existing sessions. In VS Code, the extension watches local and global configuration files and normally reloads the tree automatically. Read `vscode.md` for session behavior and refresh fallbacks.
+The CLI writes configuration atomically. It does not host terminal processes or reveal, stop, or restart existing sessions. Host adapters decide how to watch configuration and reconcile live terminals. Read `vscode.md` for the current VS Code adapter's session behavior and refresh fallbacks.

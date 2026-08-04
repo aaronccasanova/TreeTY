@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 - 2026-08-04
+
+- Generate opaque UUIDs for new groups and terminals while preserving existing IDs.
+- Add inherited project directories, freeform node metadata, and in-terminal CLI targeting.
+- Add node configuration controls for directories, environment, metadata, and restart policy.
+- Make Explorer sync opt-in by default and show the exact configured project path before adding it.
+- Close live terminals when a valid external configuration update removes their leaves.
+- Inject the host-neutral TreeTY terminal context defined by `@treety/core`.
+
 ## 0.1.0 - 2026-08-03
 
 Initial TreeTY pre-release.

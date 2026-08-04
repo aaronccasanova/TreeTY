@@ -82,6 +82,10 @@
         "env": {
           "$ref": "#/$defs/environment"
         },
+        "projectDir": {
+          "type": "string",
+          "minLength": 1
+        },
         "shell": {
           "$ref": "#/$defs/shell"
         },
@@ -129,12 +133,17 @@
               "type": "string",
               "minLength": 1
             },
+            "metadata": {},
             "cwd": {
               "type": "string",
               "minLength": 1
             },
             "env": {
               "$ref": "#/$defs/environment"
+            },
+            "projectDir": {
+              "type": "string",
+              "minLength": 1
             },
             "shell": {
               "$ref": "#/$defs/shell"
@@ -180,12 +189,17 @@
               "type": "string",
               "minLength": 1
             },
+            "metadata": {},
             "cwd": {
               "type": "string",
               "minLength": 1
             },
             "env": {
               "$ref": "#/$defs/environment"
+            },
+            "projectDir": {
+              "type": "string",
+              "minLength": 1
             },
             "shell": {
               "$ref": "#/$defs/shell"

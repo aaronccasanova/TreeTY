@@ -6,6 +6,8 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
+  getTreeNode,
+  JsonValue,
   moveTreeNode,
   removeTreeNode,
   renameTreeNode,
@@ -14,6 +16,11 @@ import {
   TreeConfig,
   TreeNodeConfig,
   TreeNodeDefaults,
+  UpdateTreeNodeOptions,
+  treeTYConfigSourceEnvironmentName,
+  treeTYNodeIdEnvironmentName,
+  treeTYSessionIdEnvironmentName,
+  updateTreeNode,
 } from "@treety/core";
 
 import {
@@ -48,7 +55,7 @@ interface TreeConfigCommandContext {
   treeConfigFilePath: string;
 }
 
-const cliVersion = "0.0.0";
+const cliVersion = "0.0.2";
 
 const optionNameByAlias = new Map([
   ["-c", "--config"],
@@ -63,11 +70,15 @@ const optionNamesWithValues = new Set([
   "--cwd",
   "--env",
   "--id",
+  "--metadata",
+  "--node",
   "--parent",
+  "--project-dir",
   "--restart-policy",
   "--shell",
   "--shell-arg",
   "--unset-env",
+  "--delete-env",
 ]);
 
 export async function runCli(
@@ -127,6 +138,22 @@ export async function runCli(
 
     if (commandName === "rename") {
       return await runRenameCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "show") {
+      return await runShowCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "configure") {
+      return await runConfigureCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "metadata") {
+      return await runMetadataCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "current") {
+      return await runCurrentCommand(treeConfigCommandContext);
     }
 
     if (commandName === "move") {
@@ -217,10 +244,12 @@ async function runAddCommand(
     "--global",
     "--id",
     "--parent",
+    "--project-dir",
     "--restart-policy",
     "--shell",
     "--shell-arg",
     "--unset-env",
+    "--metadata",
   ]);
 
   const treeNodeKind = context.parsedCommandArguments.commandArguments[1];
@@ -251,6 +280,7 @@ async function runAddCommand(
     ...treeNodeDefaults,
     id: getOptionValue(context.parsedCommandArguments, "--id"),
     name: treeNodeName,
+    metadata: getMetadataOption(context.parsedCommandArguments),
     parentId: getOptionValue(context.parsedCommandArguments, "--parent"),
   };
   const updatedTreeConfig =
@@ -278,16 +308,19 @@ async function runRenameCommand(
   assertAllowedOptions(context.parsedCommandArguments, [
     "--config",
     "--global",
+    "--node",
   ]);
 
-  const nodeId = context.parsedCommandArguments.commandArguments[1];
-  const treeNodeName = context.parsedCommandArguments.commandArguments[2];
+  const renameArguments = context.parsedCommandArguments.commandArguments.slice(1);
+  const explicitNodeId =
+    renameArguments.length === 2 ? renameArguments[0] : undefined;
+  const treeNodeName = renameArguments.at(-1);
 
-  if (!nodeId || !treeNodeName) {
-    throw new Error("Usage: treety rename <node-id> <name>");
+  if (!treeNodeName || renameArguments.length > 2) {
+    throw new Error("Usage: treety rename [node-id] <name> [--node <node-id>]");
   }
 
-  assertNoCommandArguments(context.parsedCommandArguments, 3, "rename");
+  const nodeId = getTargetNodeId(context, explicitNodeId);
 
   const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
   const updatedTreeConfig = renameTreeNode(treeConfig, nodeId, treeNodeName);
@@ -300,21 +333,233 @@ async function runRenameCommand(
   return 0;
 }
 
+async function runShowCommand(
+  context: TreeConfigCommandContext,
+): Promise<number> {
+  assertAllowedOptions(context.parsedCommandArguments, [
+    "--config",
+    "--global",
+    "--node",
+  ]);
+
+  const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
+
+  assertNoCommandArguments(context.parsedCommandArguments, explicitNodeId ? 2 : 1, "show");
+
+  const nodeId = getTargetNodeId(context, explicitNodeId);
+  const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+  const treeNodeConfig = getTreeNode(treeConfig, nodeId);
+
+  if (!treeNodeConfig) {
+    throw new Error(`Tree node "${nodeId}" does not exist.`);
+  }
+
+  context.runCliOptions.output.writeOutput(
+    JSON.stringify(treeNodeConfig, null, 2),
+  );
+
+  return 0;
+}
+
+async function runConfigureCommand(
+  context: TreeConfigCommandContext,
+): Promise<number> {
+  assertAllowedOptions(context.parsedCommandArguments, [
+    "--clear-cwd",
+    "--clear-metadata",
+    "--clear-project-dir",
+    "--clear-restart-policy",
+    "--clear-shell",
+    "--config",
+    "--cwd",
+    "--delete-env",
+    "--env",
+    "--global",
+    "--metadata",
+    "--node",
+    "--project-dir",
+    "--restart-policy",
+    "--shell",
+    "--shell-arg",
+    "--unset-env",
+  ]);
+
+  const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
+
+  assertNoCommandArguments(
+    context.parsedCommandArguments,
+    explicitNodeId ? 2 : 1,
+    "configure",
+  );
+
+  const nodeId = getTargetNodeId(context, explicitNodeId);
+  const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+  const updateTreeNodeOptions = {
+    nodeId,
+    ...getTreeNodeUpdate(context.parsedCommandArguments),
+  };
+  const updatedTreeConfig = updateTreeNode(treeConfig, updateTreeNodeOptions);
+
+  await writeTreeConfig(context.treeConfigFilePath, updatedTreeConfig);
+  context.runCliOptions.output.writeOutput(
+    `Configured ${nodeId} in ${context.treeConfigFilePath}`,
+  );
+
+  return 0;
+}
+
+async function runMetadataCommand(
+  context: TreeConfigCommandContext,
+): Promise<number> {
+  assertAllowedOptions(context.parsedCommandArguments, [
+    "--config",
+    "--global",
+    "--node",
+  ]);
+
+  const metadataCommandName =
+    context.parsedCommandArguments.commandArguments[1];
+  const metadataCommandArguments =
+    context.parsedCommandArguments.commandArguments.slice(2);
+
+  if (metadataCommandName === "get") {
+    const nodeId = getTargetNodeId(context, metadataCommandArguments[0]);
+
+    if (metadataCommandArguments.length > 1) {
+      throw new Error("Usage: treety metadata get [node-id]");
+    }
+
+    const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+    const treeNodeConfig = getTreeNode(treeConfig, nodeId);
+
+    if (!treeNodeConfig) {
+      throw new Error(`Tree node "${nodeId}" does not exist.`);
+    }
+
+    context.runCliOptions.output.writeOutput(
+      JSON.stringify(treeNodeConfig.metadata ?? null, null, 2),
+    );
+
+    return 0;
+  }
+
+  if (metadataCommandName === "set") {
+    const explicitNodeId =
+      metadataCommandArguments.length === 2
+        ? metadataCommandArguments[0]
+        : undefined;
+    const metadataContent = metadataCommandArguments.at(-1);
+
+    if (!metadataContent || metadataCommandArguments.length > 2) {
+      throw new Error("Usage: treety metadata set [node-id] <json>");
+    }
+
+    const nodeId = getTargetNodeId(context, explicitNodeId);
+    const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+    const updatedTreeConfig = updateTreeNode(treeConfig, {
+      nodeId,
+      metadata: parseMetadataContent(metadataContent),
+      metadataAction: "replace",
+    });
+
+    await writeTreeConfig(context.treeConfigFilePath, updatedTreeConfig);
+    context.runCliOptions.output.writeOutput(
+      `Set metadata for ${nodeId} in ${context.treeConfigFilePath}`,
+    );
+
+    return 0;
+  }
+
+  if (metadataCommandName === "clear") {
+    const explicitNodeId = metadataCommandArguments[0];
+
+    if (metadataCommandArguments.length > 1) {
+      throw new Error("Usage: treety metadata clear [node-id]");
+    }
+
+    const nodeId = getTargetNodeId(context, explicitNodeId);
+    const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+    const updatedTreeConfig = updateTreeNode(treeConfig, {
+      nodeId,
+      metadataAction: "remove",
+    });
+
+    await writeTreeConfig(context.treeConfigFilePath, updatedTreeConfig);
+    context.runCliOptions.output.writeOutput(
+      `Cleared metadata for ${nodeId} in ${context.treeConfigFilePath}`,
+    );
+
+    return 0;
+  }
+
+  throw new Error(
+    "Usage: treety metadata <get|set|clear> [node-id] [json]",
+  );
+}
+
+async function runCurrentCommand(
+  context: TreeConfigCommandContext,
+): Promise<number> {
+  assertAllowedOptions(context.parsedCommandArguments, [
+    "--config",
+    "--global",
+  ]);
+  assertNoCommandArguments(context.parsedCommandArguments, 1, "current");
+
+  const nodeId = getTargetNodeId(context);
+  const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
+  const treeNodeConfig = getTreeNode(treeConfig, nodeId);
+
+  if (!treeNodeConfig) {
+    throw new Error(`Tree node "${nodeId}" does not exist.`);
+  }
+
+  let configSource =
+    context.runCliOptions.environment[treeTYConfigSourceEnvironmentName];
+
+  if (hasFlag(context.parsedCommandArguments, "--global")) {
+    configSource = "global";
+  } else if (getOptionValue(context.parsedCommandArguments, "--config")) {
+    configSource = "explicit";
+  }
+
+  context.runCliOptions.output.writeOutput(
+    JSON.stringify(
+      {
+        configFilePath: context.treeConfigFilePath,
+        configSource,
+        node: treeNodeConfig,
+        terminalSessionId:
+          context.runCliOptions.environment[treeTYSessionIdEnvironmentName],
+      },
+      null,
+      2,
+    ),
+  );
+
+  return 0;
+}
+
 async function runMoveCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
   assertAllowedOptions(context.parsedCommandArguments, [
     "--config",
     "--global",
+    "--node",
     "--parent",
     "--root",
   ]);
 
-  const nodeId = context.parsedCommandArguments.commandArguments[1];
+  const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
-  if (!nodeId) throw new Error("Usage: treety move <node-id> [--parent <group-id>|--root]");
+  assertNoCommandArguments(
+    context.parsedCommandArguments,
+    explicitNodeId ? 2 : 1,
+    "move",
+  );
 
-  assertNoCommandArguments(context.parsedCommandArguments, 2, "move");
+  const nodeId = getTargetNodeId(context, explicitNodeId);
 
   const parentId = getOptionValue(context.parsedCommandArguments, "--parent");
   const moveToRoot = hasFlag(context.parsedCommandArguments, "--root");
@@ -344,14 +589,19 @@ async function runRemoveCommand(
   assertAllowedOptions(context.parsedCommandArguments, [
     "--config",
     "--global",
+    "--node",
     "--yes",
   ]);
 
-  const nodeId = context.parsedCommandArguments.commandArguments[1];
+  const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
-  if (!nodeId) throw new Error("Usage: treety remove <node-id> --yes");
+  assertNoCommandArguments(
+    context.parsedCommandArguments,
+    explicitNodeId ? 2 : 1,
+    "remove",
+  );
 
-  assertNoCommandArguments(context.parsedCommandArguments, 2, "remove");
+  const nodeId = getTargetNodeId(context, explicitNodeId);
 
   if (!hasFlag(context.parsedCommandArguments, "--yes")) {
     throw new Error(
@@ -463,11 +713,13 @@ function getTreeNodeDefaults(
 ): TreeNodeDefaults {
   const treeNodeDefaults: TreeNodeDefaults = {};
   const cwd = getOptionValue(parsedCommandArguments, "--cwd");
+  const projectDir = getOptionValue(parsedCommandArguments, "--project-dir");
   const restartPolicy = getRestartPolicy(parsedCommandArguments);
   const terminalEnvironment = getTerminalEnvironment(parsedCommandArguments);
   const terminalShellPath = getOptionValue(parsedCommandArguments, "--shell");
 
   if (cwd) treeNodeDefaults.cwd = cwd;
+  if (projectDir) treeNodeDefaults.projectDir = projectDir;
   if (restartPolicy) treeNodeDefaults.restartPolicy = restartPolicy;
   if (terminalEnvironment) treeNodeDefaults.env = terminalEnvironment;
 
@@ -481,6 +733,108 @@ function getTreeNodeDefaults(
   }
 
   return treeNodeDefaults;
+}
+
+function getTreeNodeUpdate(
+  parsedCommandArguments: ParsedCommandArguments,
+): Omit<UpdateTreeNodeOptions, "nodeId"> {
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
+    "--cwd",
+    "--clear-cwd",
+  );
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
+    "--project-dir",
+    "--clear-project-dir",
+  );
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
+    "--restart-policy",
+    "--clear-restart-policy",
+  );
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
+    "--shell",
+    "--clear-shell",
+  );
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
+    "--metadata",
+    "--clear-metadata",
+  );
+
+  const treeNodeUpdate: Omit<UpdateTreeNodeOptions, "nodeId"> = {};
+  const cwd = getOptionValue(parsedCommandArguments, "--cwd");
+  const projectDir = getOptionValue(parsedCommandArguments, "--project-dir");
+  const terminalEnvironment = getTerminalEnvironment(parsedCommandArguments);
+  const deletedEnvironmentNames = getOptionValues(
+    parsedCommandArguments,
+    "--delete-env",
+  );
+  const restartPolicy = getRestartPolicy(parsedCommandArguments);
+  const terminalShellPath = getOptionValue(parsedCommandArguments, "--shell");
+  const terminalShellArguments = getOptionValues(
+    parsedCommandArguments,
+    "--shell-arg",
+  );
+  const metadataContent = getOptionValue(
+    parsedCommandArguments,
+    "--metadata",
+  );
+
+  if (cwd) treeNodeUpdate.cwd = cwd;
+  if (hasFlag(parsedCommandArguments, "--clear-cwd")) {
+    treeNodeUpdate.cwd = null;
+  }
+
+  if (projectDir) treeNodeUpdate.projectDir = projectDir;
+  if (hasFlag(parsedCommandArguments, "--clear-project-dir")) {
+    treeNodeUpdate.projectDir = null;
+  }
+
+  if (restartPolicy) treeNodeUpdate.restartPolicy = restartPolicy;
+  if (hasFlag(parsedCommandArguments, "--clear-restart-policy")) {
+    treeNodeUpdate.restartPolicy = null;
+  }
+
+  if (terminalEnvironment || deletedEnvironmentNames.length > 0) {
+    treeNodeUpdate.env = {
+      delete: deletedEnvironmentNames,
+      set: terminalEnvironment,
+    };
+  }
+
+  if (terminalShellPath) {
+    treeNodeUpdate.shell = {
+      path: terminalShellPath,
+      args:
+        terminalShellArguments.length > 0
+          ? terminalShellArguments
+          : undefined,
+    };
+  } else if (terminalShellArguments.length > 0) {
+    throw new Error("--shell-arg requires --shell.");
+  }
+
+  if (hasFlag(parsedCommandArguments, "--clear-shell")) {
+    treeNodeUpdate.shell = null;
+  }
+
+  if (metadataContent !== undefined) {
+    treeNodeUpdate.metadata = parseMetadataContent(metadataContent);
+    treeNodeUpdate.metadataAction = "replace";
+  }
+
+  if (hasFlag(parsedCommandArguments, "--clear-metadata")) {
+    treeNodeUpdate.metadataAction = "remove";
+  }
+
+  if (Object.keys(treeNodeUpdate).length === 0) {
+    throw new Error("Configure requires at least one node option.");
+  }
+
+  return treeNodeUpdate;
 }
 
 function getTerminalEnvironment(
@@ -518,6 +872,60 @@ function getTerminalEnvironment(
   return Object.keys(terminalEnvironment).length > 0
     ? terminalEnvironment
     : undefined;
+}
+
+function getMetadataOption(
+  parsedCommandArguments: ParsedCommandArguments,
+): JsonValue | undefined {
+  const metadataContent = getOptionValue(
+    parsedCommandArguments,
+    "--metadata",
+  );
+
+  return metadataContent === undefined
+    ? undefined
+    : parseMetadataContent(metadataContent);
+}
+
+function parseMetadataContent(metadataContent: string): JsonValue {
+  try {
+    return JSON.parse(metadataContent) as JsonValue;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    throw new Error(`Metadata is not valid JSON: ${errorMessage}`);
+  }
+}
+
+function getTargetNodeId(
+  context: TreeConfigCommandContext,
+  explicitNodeId?: string,
+): string {
+  const nodeId =
+    explicitNodeId ??
+    getOptionValue(context.parsedCommandArguments, "--node") ??
+    context.runCliOptions.environment[treeTYNodeIdEnvironmentName];
+
+  if (nodeId) return nodeId;
+
+  throw new Error(
+    "A node ID is required outside a TreeTY terminal. Pass it directly or use --node <node-id>.",
+  );
+}
+
+function assertOptionAndClearFlagAreExclusive(
+  parsedCommandArguments: ParsedCommandArguments,
+  optionName: string,
+  clearFlagName: string,
+): void {
+  if (
+    getOptionValue(parsedCommandArguments, optionName) === undefined ||
+    !hasFlag(parsedCommandArguments, clearFlagName)
+  ) {
+    return;
+  }
+
+  throw new Error(`Use either ${optionName} or ${clearFlagName}, not both.`);
 }
 
 function getRestartPolicy(
@@ -660,20 +1068,40 @@ Usage:
   treety list [--json]
   treety add group <name> [options]
   treety add terminal <name> [options] [-- <command> [args...]]
-  treety rename <node-id> <name>
-  treety move <node-id> (--parent <group-id> | --root)
-  treety remove <node-id> --yes
+  treety show [node-id]
+  treety configure [node-id] [options]
+  treety rename [node-id] <name>
+  treety move [node-id] (--parent <group-id> | --root)
+  treety remove [node-id] --yes
+  treety metadata get [node-id]
+  treety metadata set [node-id] <json>
+  treety metadata clear [node-id]
+  treety current
   treety config path
 
 Node options:
   --id <id>                    Set an explicit stable node ID
   --parent <group-id>          Add the node beneath a group
   --cwd <path>                 Set the node's inherited working directory
+  --project-dir <path>         Set the inherited project directory
   --env <NAME=value>           Add an environment value (repeatable)
   --unset-env <NAME>           Remove an inherited value (repeatable)
+  --metadata <json>            Set freeform JSON metadata
   --shell <path>               Set a shell executable
   --shell-arg <value>          Add a shell argument (repeatable)
   --restart-policy <policy>    Use manual or onOpen
+
+Configure-only options:
+  --clear-cwd                  Restore the inherited working directory
+  --clear-project-dir          Restore the inherited project directory
+  --delete-env <NAME>          Delete a node environment override
+  --clear-shell                Restore the inherited shell
+  --clear-restart-policy       Restore the inherited restart policy
+  --clear-metadata             Remove node metadata
+
+Target selection:
+  --node <node-id>             Target a node explicitly
+  TreeTY terminals infer the node and configuration from their environment.
 
 Config options:
   -g, --global                 Use the global TreeTY configuration

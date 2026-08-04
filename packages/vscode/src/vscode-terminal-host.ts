@@ -1,12 +1,15 @@
 import * as crypto from "node:crypto";
 
 import {
+  buildTreeTYTerminalEnvironment,
   Disposable,
   HostedTerminalSession,
   TerminalHost,
   TerminalHostEvent,
   TerminalHostEventListener,
   TerminalLaunchRequest,
+  treeTYNodeIdEnvironmentName,
+  treeTYSessionIdEnvironmentName,
 } from "@treety/core";
 import * as vscode from "vscode";
 
@@ -16,8 +19,6 @@ interface TerminalMetadata {
   workspaceId: string;
 }
 
-const sessionIdEnvironmentName = "TREETY_SESSION_ID";
-const nodeIdEnvironmentName = "TREETY_NODE_ID";
 const workspaceIdEnvironmentName = "TREETY_WORKSPACE_ID";
 
 export class VscodeTerminalHost implements TerminalHost {
@@ -27,7 +28,11 @@ export class VscodeTerminalHost implements TerminalHost {
 
   private readonly vscodeDisposables: vscode.Disposable[];
 
-  public constructor(private readonly workspaceId: string) {
+  public constructor(
+    private readonly workspaceId: string,
+    private readonly configFilePath: string,
+    private readonly configSource: "global" | "workspace",
+  ) {
     this.vscodeDisposables = [
       vscode.window.onDidCloseTerminal((terminal) =>
         this.handleClosedTerminal(terminal),
@@ -69,6 +74,8 @@ export class VscodeTerminalHost implements TerminalHost {
       terminalLaunchRequest,
       sessionId,
       this.workspaceId,
+      this.configFilePath,
+      this.configSource,
     );
     const terminal = vscode.window.createTerminal(terminalOptions);
 
@@ -179,14 +186,21 @@ function buildTerminalOptions(
   terminalLaunchRequest: TerminalLaunchRequest,
   sessionId: string,
   workspaceId: string,
+  configFilePath: string,
+  configSource: "global" | "workspace",
 ): vscode.TerminalOptions {
   const terminalOptions: vscode.TerminalOptions = {
     name: `TreeTY: ${terminalLaunchRequest.name}`,
     cwd: terminalLaunchRequest.cwd,
     env: {
       ...terminalLaunchRequest.env,
-      [sessionIdEnvironmentName]: sessionId,
-      [nodeIdEnvironmentName]: terminalLaunchRequest.nodeId,
+      ...buildTreeTYTerminalEnvironment({
+        configFilePath,
+        configSource,
+        nodeId: terminalLaunchRequest.nodeId,
+        metadata: terminalLaunchRequest.metadata,
+        sessionId,
+      }),
       [workspaceIdEnvironmentName]: workspaceId,
     },
     iconPath: new vscode.ThemeIcon("terminal"),
@@ -215,8 +229,8 @@ function getTerminalMetadata(terminal: vscode.Terminal): TerminalMetadata | unde
 
   if (!terminalEnvironment) return undefined;
 
-  const sessionId = terminalEnvironment[sessionIdEnvironmentName];
-  const nodeId = terminalEnvironment[nodeIdEnvironmentName];
+  const sessionId = terminalEnvironment[treeTYSessionIdEnvironmentName];
+  const nodeId = terminalEnvironment[treeTYNodeIdEnvironmentName];
   const workspaceId = terminalEnvironment[workspaceIdEnvironmentName];
 
   if (

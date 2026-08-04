@@ -21,6 +21,7 @@ test.test("resolves inherited directories, environments, and policies", () => {
         "id": "services",
         "name": "Services",
         "cwd": "services",
+        "projectDir": "..",
         "env": { "GROUP": "api" },
         "children": [
           {
@@ -30,6 +31,10 @@ test.test("resolves inherited directories, environments, and policies", () => {
             "cwd": "api",
             "env": { "REMOVED": null },
             "restartPolicy": "onOpen",
+            "metadata": {
+              "owner": "platform",
+              "tags": ["api", "development"]
+            },
             "command": {
               "executable": "pnpm",
               "args": ["dev"]
@@ -58,12 +63,17 @@ test.test("resolves inherited directories, environments, and policies", () => {
   }
 
   assert.equal(apiTerminal.cwd, path.resolve(workspaceDirPath, "services/api"));
+  assert.equal(apiTerminal.projectDir, workspaceDirPath);
   assert.deepEqual(apiTerminal.env, {
     SHARED: "yes",
     REMOVED: null,
     GROUP: "api",
   });
   assert.equal(apiTerminal.restartPolicy, "onOpen");
+  assert.deepEqual(apiTerminal.metadata, {
+    owner: "platform",
+    tags: ["api", "development"],
+  });
   assert.deepEqual(apiTerminal.command, {
     executable: "pnpm",
     args: ["dev"],

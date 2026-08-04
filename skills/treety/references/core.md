@@ -7,10 +7,11 @@ Use `@treety/core` to build or extend host adapters. Keep host UI, filesystem di
 The package exports these main concerns:
 
 - Configuration: `parseTreeConfigContent`, `formatTreeConfigContent`, `resolveTreeConfig`, and `TreeConfigError`
-- Immutable tree editing: `createEmptyTreeConfig`, `addTreeGroup`, `addTreeTerminal`, `renameTreeNode`, `moveTreeNode`, `removeTreeNode`, `getTreeNode`, `createTreeNodeId`, and `TreeNodeOperationError`
+- Immutable tree editing: `createEmptyTreeConfig`, `addTreeGroup`, `addTreeTerminal`, `updateTreeNode`, `renameTreeNode`, `moveTreeNode`, `removeTreeNode`, `getTreeNode`, `createTreeNodeId`, and `TreeNodeOperationError`
 - Lifecycle orchestration: `TreeTYEngine` and `TerminalSessionStore`
 - Host integration: `TerminalHost`, `TerminalLaunchRequest`, `HostedTerminalSession`, and `TerminalHostEvent`
-- Models: unresolved and resolved tree nodes, defaults, commands, shells, environment values, restart policies, and terminal session states
+- Terminal context: `buildTreeTYTerminalEnvironment`, `TreeTYTerminalContext`, and the exported environment names
+- Models: unresolved and resolved tree nodes, opaque IDs, working and project directories, freeform JSON metadata, defaults, commands, shells, environment values, restart policies, and terminal session states
 
 Import from the package root:
 
@@ -35,8 +36,10 @@ Call `resolveTreeConfig(treeConfig, workspaceDirPath)` before constructing an en
 
 - Makes every working directory absolute.
 - Resolves relative `cwd` values from the nearest ancestor.
+- Preserves an absolute `projectDir`, or resolves a relative value from that node's working directory, then inherits the resolved project directory independently.
 - Merges inherited environment values, with `null` preserved for host-level removal.
 - Inherits shell and restart policy values.
+- Preserves node metadata without inheritance or merge semantics.
 - Defaults `restartPolicy` to `manual`.
 
 Parse untrusted JSON with `parseTreeConfigContent` rather than casting it. Format writes with `formatTreeConfigContent` to validate the model and include a trailing newline.
@@ -65,7 +68,9 @@ const treeTYEngine = new TreeTYEngine(resolvedTreeConfig, terminalHost);
 await treeTYEngine.start();
 ```
 
-The host must provide stable session IDs and associate recovered sessions with TreeTY node IDs. Emit `started`, `idle`, and `closed` events with both identifiers. The engine uses these events to maintain stopped, starting, idle, running, and failed states.
+The host must provide session IDs and associate recovered sessions with TreeTY node IDs. A session ID identifies one runtime terminal instance; a node ID identifies the persistent terminal definition. Emit `started`, `idle`, and `closed` events with both identifiers. The engine uses these events to maintain stopped, starting, idle, running, and failed states. `TerminalLaunchRequest` includes the resolved `cwd`, inherited environment, and optional node metadata.
+
+Before creating a terminal process, use `buildTreeTYTerminalEnvironment` with the resolved config file path, config source, node ID, metadata, and host session ID. Merge the result after user-configured environment values so the reserved TreeTY context cannot be overridden. This standardizes `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID` across adapters.
 
 ## Keep responsibilities separate
 

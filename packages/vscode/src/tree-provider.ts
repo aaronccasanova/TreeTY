@@ -191,7 +191,7 @@ function buildGroupTreeItem(nodeTreeEntry: NodeTreeEntry): vscode.TreeItem {
   groupTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
   groupTreeItem.iconPath = new vscode.ThemeIcon("folder");
   groupTreeItem.contextValue = "treetyGroup";
-  groupTreeItem.tooltip = nodeTreeEntry.treeNode.cwd;
+  groupTreeItem.tooltip = buildNodeTooltip(nodeTreeEntry);
 
   return groupTreeItem;
 }
@@ -209,7 +209,7 @@ function buildTerminalTreeItem(
     .get<boolean>("showStatusDescriptions", true);
 
   terminalTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
-  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}`;
+  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}.${nodeTreeEntry.treeNode.projectDir ? "project" : "noProject"}`;
   terminalTreeItem.iconPath = getTerminalStatusIcon(terminalSessionState.status);
   terminalTreeItem.description = showStatusDescriptions
     ? terminalSessionState.status
@@ -237,8 +237,16 @@ function buildTerminalTooltip(
     path.relative(workspaceDirPath, nodeTreeEntry.treeNode.cwd) || ".";
   const tooltipLines = [
     `Status: ${terminalSessionState.status}`,
-    `Directory: ${terminalDirName}`,
+    `Working directory: ${nodeTreeEntry.treeNode.cwd}`,
+    `Relative directory: ${terminalDirName}`,
+    `Node ID: ${nodeTreeEntry.treeNode.id}`,
   ];
+
+  if (nodeTreeEntry.treeNode.projectDir) {
+    tooltipLines.push(
+      `Project directory: ${nodeTreeEntry.treeNode.projectDir}`,
+    );
+  }
 
   if (
     nodeTreeEntry.treeNode.kind === "terminal" &&
@@ -254,6 +262,33 @@ function buildTerminalTooltip(
 
   if (terminalSessionState.exitCode !== undefined) {
     tooltipLines.push(`Exit code: ${terminalSessionState.exitCode}`);
+  }
+
+  if (nodeTreeEntry.treeNode.metadata !== undefined) {
+    tooltipLines.push(
+      `Metadata: ${JSON.stringify(nodeTreeEntry.treeNode.metadata)}`,
+    );
+  }
+
+  return tooltipLines.join("\n");
+}
+
+function buildNodeTooltip(nodeTreeEntry: NodeTreeEntry): string {
+  const tooltipLines = [
+    `Working directory: ${nodeTreeEntry.treeNode.cwd}`,
+    `Node ID: ${nodeTreeEntry.treeNode.id}`,
+  ];
+
+  if (nodeTreeEntry.treeNode.projectDir) {
+    tooltipLines.push(
+      `Project directory: ${nodeTreeEntry.treeNode.projectDir}`,
+    );
+  }
+
+  if (nodeTreeEntry.treeNode.metadata !== undefined) {
+    tooltipLines.push(
+      `Metadata: ${JSON.stringify(nodeTreeEntry.treeNode.metadata)}`,
+    );
   }
 
   return tooltipLines.join("\n");

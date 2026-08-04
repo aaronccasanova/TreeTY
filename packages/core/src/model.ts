@@ -9,6 +9,14 @@ export type TerminalStatus =
 
 export type TerminalEnvironment = Record<string, string | null>;
 
+export type JsonValue =
+  | boolean
+  | number
+  | string
+  | null
+  | JsonValue[]
+  | { [propertyName: string]: JsonValue };
+
 export interface TerminalShellConfig {
   path: string;
   args?: string[];
@@ -22,6 +30,7 @@ export interface TerminalCommandConfig {
 export interface TreeNodeDefaults {
   cwd?: string;
   env?: TerminalEnvironment;
+  projectDir?: string;
   shell?: TerminalShellConfig;
   restartPolicy?: RestartPolicy;
 }
@@ -30,6 +39,7 @@ export interface TreeGroupConfig extends TreeNodeDefaults {
   kind: "group";
   id: string;
   name: string;
+  metadata?: JsonValue;
   children: TreeNodeConfig[];
 }
 
@@ -37,6 +47,7 @@ export interface TreeTerminalConfig extends TreeNodeDefaults {
   kind: "terminal";
   id: string;
   name: string;
+  metadata?: JsonValue;
   command?: TerminalCommandConfig;
 }
 
@@ -53,8 +64,10 @@ export interface ResolvedTreeNodeBase {
   name: string;
   cwd: string;
   env: TerminalEnvironment;
+  projectDir?: string;
   shell?: TerminalShellConfig;
   restartPolicy: RestartPolicy;
+  metadata?: JsonValue;
   parentId?: string;
 }
 
