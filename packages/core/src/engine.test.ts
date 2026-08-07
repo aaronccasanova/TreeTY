@@ -83,6 +83,7 @@ const resolvedTreeConfig: ResolvedTreeConfig = {
       name: "Shell",
       cwd: "/workspace",
       env: {},
+      needsAttention: false,
       restartPolicy: "manual",
     },
     {
@@ -94,6 +95,7 @@ const resolvedTreeConfig: ResolvedTreeConfig = {
       metadata: {
         owner: "platform",
       },
+      needsAttention: false,
       restartPolicy: "onOpen",
       command: {
         executable: "pnpm",
@@ -164,5 +166,75 @@ test.test("ignores a late close event from a replaced session", async () => {
   assert.equal(
     treeTYEngine.getTerminalSessionState("shell").hostSessionId,
     "session-3",
+  );
+});
+
+test.test("reconciles node changes without replacing live sessions", async () => {
+  const terminalHost = new FakeTerminalHost();
+  const initialResolvedTreeConfig: ResolvedTreeConfig = {
+    version: 1,
+    workspaceDirPath: "/workspace",
+    tree: [
+      {
+        kind: "terminal",
+        id: "shell",
+        name: "Shell",
+        cwd: "/workspace",
+        env: {},
+        needsAttention: false,
+        restartPolicy: "manual",
+      },
+    ],
+  };
+  const treeTYEngine = new TreeTYEngine(
+    initialResolvedTreeConfig,
+    terminalHost,
+  );
+
+  await treeTYEngine.start();
+  await treeTYEngine.openTerminal("shell");
+
+  const shellSessionId =
+    treeTYEngine.getTerminalSessionState("shell").hostSessionId;
+  const reconciledTreeConfig: ResolvedTreeConfig = {
+    ...initialResolvedTreeConfig,
+    tree: [
+      {
+        ...initialResolvedTreeConfig.tree[0]!,
+        name: "Renamed shell",
+      },
+      {
+        kind: "terminal",
+        id: "worker",
+        name: "Worker",
+        cwd: "/workspace/worker",
+        env: {},
+        needsAttention: false,
+        restartPolicy: "onOpen",
+      },
+    ],
+  };
+
+  await treeTYEngine.reconcile(reconciledTreeConfig);
+
+  assert.equal(
+    treeTYEngine.getTerminalSessionState("shell").hostSessionId,
+    shellSessionId,
+  );
+  assert.equal(terminalHost.closedSessionIds.length, 0);
+  assert.equal(terminalHost.terminalLaunchRequests.at(-1)?.nodeId, "worker");
+
+  const workerSessionId =
+    treeTYEngine.getTerminalSessionState("worker").hostSessionId;
+
+  await treeTYEngine.reconcile({
+    ...reconciledTreeConfig,
+    tree: [reconciledTreeConfig.tree[0]!],
+  });
+
+  assert.deepEqual(terminalHost.closedSessionIds, [workerSessionId]);
+  assert.equal(
+    treeTYEngine.getTerminalSessionState("shell").hostSessionId,
+    shellSessionId,
   );
 });

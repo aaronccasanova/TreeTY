@@ -2,6 +2,7 @@ import {
   ResolvedTreeConfig,
   TerminalSessionState,
   TreeConfig,
+  TreeState,
   TreeTYEngine,
 } from "@treety/core";
 import * as vscode from "vscode";
@@ -14,12 +15,14 @@ interface WorkspaceModelBase {
   workspaceDirUri: vscode.Uri;
   workspaceFolder?: vscode.WorkspaceFolder;
   configFileUri: vscode.Uri;
+  stateFileUri: vscode.Uri;
   configSource: TreeConfigSource;
 }
 
 export interface ConfiguredWorkspaceModel extends WorkspaceModelBase {
   kind: "configured";
   treeConfig: TreeConfig;
+  treeState: TreeState;
   resolvedTreeConfig: ResolvedTreeConfig;
   treeTYEngine: TreeTYEngine;
 }

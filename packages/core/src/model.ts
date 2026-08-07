@@ -78,6 +78,7 @@ export interface ResolvedTreeGroup extends ResolvedTreeNodeBase {
 
 export interface ResolvedTreeTerminal extends ResolvedTreeNodeBase {
   kind: "terminal";
+  needsAttention: boolean;
   command?: TerminalCommandConfig;
 }
 
@@ -94,6 +95,15 @@ export interface TerminalSessionState {
   status: TerminalStatus;
   hostSessionId?: string;
   exitCode?: number;
+}
+
+export interface TreeNodeState {
+  needsAttention: true;
+}
+
+export interface TreeState {
+  version: 1;
+  nodes: Record<string, TreeNodeState>;
 }
 
 export interface Disposable {

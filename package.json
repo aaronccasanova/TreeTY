@@ -4,6 +4,17 @@
   "private": true,
   "description": "A hierarchical terminal workspace for VS Code and future hosts.",
   "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "extensions/treety.js"
+    ],
+    "skills": [
+      "skills"
+    ]
+  },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety run build",
@@ -18,7 +29,7 @@
     "release:publish:core": "pnpm --filter @treety/core publish --access public",
     "release:publish:cli": "pnpm --filter @treety/cli publish --access public",
     "release:publish:vscode": "node scripts/publish-vscode-extension.mjs --pre-release",
-    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test"
+    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && node --test extensions/*.test.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

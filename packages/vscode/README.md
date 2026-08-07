@@ -8,6 +8,10 @@ TreeTY shows the global root first as a stable anchor, followed by an explicit r
 
 Select a local root, global root, or group before using the title-bar controls. `+` creates a terminal, and `new folder` creates a group at the selected location. The same actions are available inline and from each root or group's context menu. Each create prompt confirms its destination. Select a terminal leaf to create or reveal its native terminal. Use its inline controls to open, restart, stop, or delete it. Stopping closes the native terminal but preserves the tree entry; deleting removes the entry after confirmation. Use Configure Node from a group or terminal context menu to edit its working directory, project directory, environment, metadata, or restart policy.
 
+Move offers append-to-root, append-to-group, before-sibling, and after-sibling placement. Configuration watchers reconcile only the changed tree and preserve matching live sessions. Changes to launch settings apply to the next terminal launch.
+
+Durable attention from `.treety/state.json` appears as a small `!` file decoration without replacing the lifecycle icon or description. The decoration propagates to ancestor groups and clears when the terminal is opened or revealed.
+
 `TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its configured project directory to the VS Code workspace. It defaults to `never` and also supports `prompt` and `always`. The terminal context menu exposes an explicit add-project-directory command only when the leaf has an inherited or direct `projectDir`; its confirmation shows the exact path.
 
 `TreeTY: Global Tree Visibility` shows local and global roots together by default. It can instead keep the global tree as a fallback or hide it while folders are open. Empty windows always load the global root.

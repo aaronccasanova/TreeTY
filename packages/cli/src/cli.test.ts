@@ -6,6 +6,8 @@ import * as test from "node:test";
 
 import {
   parseTreeConfigContent,
+  getTreeStateFilePath,
+  parseTreeStateContent,
   treeTYConfigFileEnvironmentName,
   treeTYConfigSourceEnvironmentName,
   treeTYNodeIdEnvironmentName,
@@ -82,6 +84,20 @@ test.test("manages a complete local tree lifecycle", async () => {
     );
     assert.equal(
       await runCli(["move", "api-server", "--root"], runCliOptions),
+      0,
+    );
+    assert.equal(
+      await runCli(
+        ["add", "terminal", "Root shell", "--id", "root-shell"],
+        runCliOptions,
+      ),
+      0,
+    );
+    assert.equal(
+      await runCli(
+        ["move", "api-server", "--before", "root-shell"],
+        runCliOptions,
+      ),
       0,
     );
     assert.equal(await runCli(["list"], runCliOptions), 0);
@@ -182,6 +198,26 @@ test.test("targets the current terminal through its injected environment", async
       ),
       0,
     );
+    assert.equal(
+      await runCli(
+        [
+          "metadata",
+          "set-path",
+          "/integrations/pi/sessionId",
+          '"pi-session-123"',
+        ],
+        runCliOptions,
+      ),
+      0,
+    );
+    assert.equal(
+      await runCli(
+        ["configure", "--", "pi", "--session", "pi-session-123"],
+        runCliOptions,
+      ),
+      0,
+    );
+    assert.equal(await runCli(["attention", "set"], runCliOptions), 0);
     assert.equal(await runCli(["current"], runCliOptions), 0);
 
     const treeConfigFileContent = await fs.readFile(treeConfigFilePath, "utf8");
@@ -198,12 +234,47 @@ test.test("targets the current terminal through its injected environment", async
     assert.deepEqual(shellNode?.metadata, {
       owner: "platform",
       tags: ["cli"],
+      integrations: {
+        pi: {
+          sessionId: "pi-session-123",
+        },
+      },
     });
+    assert.deepEqual(
+      shellNode?.kind === "terminal" ? shellNode.command : undefined,
+      {
+        executable: "pi",
+        args: ["--session", "pi-session-123"],
+      },
+    );
+    assert.deepEqual(
+      parseTreeStateContent(
+        await fs.readFile(getTreeStateFilePath(treeConfigFilePath), "utf8"),
+      ),
+      {
+        version: 1,
+        nodes: {
+          shell: { needsAttention: true },
+        },
+      },
+    );
     assert.match(capturedOutput.messages.at(-1) ?? "", /Focused shell/);
     assert.match(
       capturedOutput.messages.at(-1) ?? "",
       /terminal-session-123/,
     );
+    assert.equal(
+      await runCli(["configure", "--clear-command"], runCliOptions),
+      0,
+    );
+    assert.equal(
+      await runCli(
+        ["metadata", "clear-path", "/integrations/pi/sessionId"],
+        runCliOptions,
+      ),
+      0,
+    );
+    assert.equal(await runCli(["attention", "clear"], runCliOptions), 0);
   } finally {
     await fs.rm(temporaryDirPath, { recursive: true, force: true });
   }

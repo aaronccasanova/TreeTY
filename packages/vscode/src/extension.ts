@@ -16,6 +16,7 @@ export async function activate(
     treeTYController,
     treeTYTreeProvider,
     treeTYTreeView,
+    vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
     registerAsyncCommand(
       "treety.initializeWorkspace",

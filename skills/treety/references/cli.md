@@ -145,6 +145,8 @@ Group nodes accept the same options and pass their resolved defaults to descenda
 treety rename <node-id> "Development API"
 treety move <node-id> --parent <experiments-id>
 treety move <node-id> --root
+treety move <node-id> --before <sibling-id>
+treety move <node-id> --after <sibling-id>
 ```
 
 Removing a group also removes all descendants:
@@ -176,12 +178,21 @@ treety configure <node-id> \
 
 Use `--clear-cwd`, `--clear-project-dir`, `--clear-shell`, or `--clear-restart-policy` to restore inheritance. Use `--delete-env <NAME>` to remove a node override; `--unset-env <NAME>` stores `null` and removes an inherited or host environment value when the terminal launches.
 
+Set or clear an existing terminal's startup command:
+
+```sh
+treety configure <node-id> -- pi --session <session-id>
+treety configure <node-id> --clear-command
+```
+
 Metadata accepts any JSON value and is replaced atomically:
 
 ```sh
 treety metadata get <node-id>
 treety metadata set <node-id> '{"owner":"platform","tags":["review"]}'
 treety metadata clear <node-id>
+treety metadata set-path <node-id> /integrations/example/id '"example-123"'
+treety metadata clear-path <node-id> /integrations/example/id
 ```
 
 Target the same operations in another config explicitly:
@@ -191,10 +202,23 @@ treety metadata set <node-id> '{"owner":"platform"}' --global
 treety metadata set <node-id> '{"owner":"platform"}' --config /absolute/path/to/tree.json
 ```
 
-Do not assume deep-merge behavior. To change part of an object, read the current value, transform the JSON explicitly (for example with `jq`), and set the complete result. Inside the target leaf, omit `<node-id>`.
+Whole-value `metadata set` still replaces metadata. Use JSON Pointer path operations for targeted object changes. They preserve unrelated properties, create missing object parents, and reject incompatible traversal. Inside the target leaf, omit `<node-id>`.
+
+Set or clear durable local attention:
+
+```sh
+treety attention set <node-id>
+treety attention clear <node-id>
+```
+
+Inside the target terminal, both commands infer the config and node from `TREETY_CONFIG_FILE` and `TREETY_NODE_ID`. Attention is idempotent and stored in local `state.json`, not declarative `tree.json`.
 
 Before removal, resolve the scope, inspect the tree, verify the exact ID, and obtain any required authorization. List the tree again after every mutation.
 
 ## Understand current limits
 
-The CLI writes configuration atomically. It does not host terminal processes or reveal, stop, or restart existing sessions. Host adapters decide how to watch configuration and reconcile live terminals. Read `vscode.md` for the current VS Code adapter's session behavior and refresh fallbacks.
+The CLI serializes tree and state changes with shared cooperative locks and atomic replacement. It does not host terminal processes or reveal, stop, or restart existing sessions. Host adapters decide how to watch configuration and reconcile live terminals. Read `vscode.md` for the current VS Code adapter's session behavior and refresh fallbacks.
+
+## Link a Pi session
+
+Install the repository Pi package with `pi install git:github.com/aaronccasanova/TreeTY`, then run `/treety-setup` inside the target TreeTY terminal. The extension stores the current `PI_SESSION_ID` through `metadata set-path`, sets `pi --session <session-id>` through `configure`, leaves `restartPolicy` unchanged, and maps `agent_start` and `agent_settled` to generic attention commands.

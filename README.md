@@ -14,6 +14,9 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 - Support interactive shells and direct startup commands.
 - Load workspace trees from `.treety/tree.json` alongside a separately manageable global tree.
 - Manage tree structure from either the VS Code tree or the `treety` command.
+- Serialize tree and local-state mutations with cooperative locks and atomic replacement.
+- Persist terminal attention separately from terminal lifecycle status.
+- Resume linked Pi sessions through the repository's optional Pi extension.
 - Optionally add explicitly configured project directories to VS Code Explorer and Source Control.
 
 ## Architecture
@@ -21,6 +24,7 @@ TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its fi
 ```text
 packages/core
   configuration parser and validation
+  transactional tree and local-state storage
   immutable tree creation, mutation, and validation
   inheritance and path resolution
   session lifecycle state machine
@@ -29,7 +33,7 @@ packages/core
 packages/cli
   local and global configuration discovery
   group and terminal creation
-  list, inspect, configure, rename, move, metadata, and remove commands
+  list, inspect, configure, rename, order, metadata, attention, and remove commands
 
 packages/vscode
   TreeDataProvider adapter
@@ -75,11 +79,15 @@ Once the executable is available, the management workflow is:
 treety init
 treety add group "Services" --id services --cwd services --project-dir ..
 treety add terminal "API server" --id api-server --parent services --cwd api -- pnpm dev
+treety add terminal "API shell" --id api-shell --parent services --cwd api
 treety list
 treety rename api-server "Development API"
 treety configure api-server --project-dir ../.. --env PORT=3000
 treety metadata set api-server '{"owner":"platform","tags":["api"]}'
-treety move api-server --root
+treety metadata set-path api-server /integrations/example/id '"example-123"'
+treety configure api-server -- pnpm dev
+treety move api-server --before api-shell
+treety attention set api-server
 treety remove api-server --yes
 ```
 
@@ -92,6 +100,30 @@ Node IDs are unique within one configuration. A persistent node is identified by
 TreeTY reads `.treety/tree.json` from the workspace root. The CLI falls back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json` when a workspace does not have a local tree. The VS Code extension shows explicit local and global roots together by default, so either scope can be managed without changing windows. A VS Code window with no open folder loads the global tree directly, with relative directories resolved from the user's home directory.
 
 You can create the global file with `TreeTY: Initialize Global Tree` or `treety init --global`.
+
+`tree.json` remains the declarative source of truth. TreeTY stores mutable local state beside it:
+
+```text
+.treety/
+  .gitignore
+  tree.json
+  state.json
+```
+
+`state.json` records boolean `needsAttention` values by terminal node ID. Default values are omitted, deleted node IDs are pruned during later mutations, and the scoped `.treety/.gitignore` excludes state, lock, and temporary files. A custom config such as `review.json` uses `review.state.json` in the same directory.
+
+```json
+{
+  "version": 1,
+  "nodes": {
+    "api-server": {
+      "needsAttention": true
+    }
+  }
+}
+```
+
+TreeTY serializes every owned `tree.json` and `state.json` mutation with a bounded cooperative lock. It rereads the latest document after locking, validates the complete semantic result, and atomically replaces the destination. Concurrent CLI and VS Code mutations therefore preserve one another.
 
 Example configuration:
 
@@ -142,6 +174,8 @@ Node IDs are stable machine identities. TreeTY generates opaque UUIDs for new no
 
 `metadata` accepts any JSON value and does not inherit. TreeTY treats it as an opaque value and replaces it atomically rather than applying ambiguous deep-merge rules.
 
+Use `metadata set-path` and `metadata clear-path` for targeted JSON Pointer updates. Missing object parents are created, unrelated metadata is preserved, and incompatible traversal fails without changing the file.
+
 `restartPolicy` supports:
 
 - `manual` (default): Recover a hosted session when available. Otherwise, wait for an explicit open or restart request.
@@ -156,6 +190,20 @@ Host adapters inject a standard terminal context built by `@treety/core`: `TREET
 Select a local root, global root, or group, then use the view title controls to create a terminal or group at that location. `+` always means terminal, and `new folder` always means group. The selected destination is repeated in the create prompt. The same create actions are available inline and from root and group context menus.
 
 Terminal rows expose open, restart, stop, and delete controls. Stop closes the native terminal while preserving its entry for a later restart. Delete removes the entry after confirmation. Groups and terminals also provide configure, rename, move, and delete actions from their context menus. Configure edits working directory, project directory, environment, metadata, and restart policy without opening JSON. Deleting a group confirms the descendant count and closes running terminals in that subtree. A valid CLI or file edit that removes a leaf also closes its matching live terminal.
+
+Move supports append-to-root, append-to-group, before-sibling, and after-sibling placement. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes; removed leaves close their matching sessions.
+
+Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` adds a small `!` decoration to a terminal and its ancestor groups. Opening or revealing that terminal clears attention.
+
+## Pi integration
+
+Install this repository as a Pi package:
+
+```sh
+pi install git:github.com/aaronccasanova/TreeTY
+```
+
+Run `/treety-setup` inside a TreeTY terminal. The extension stores `PI_SESSION_ID` at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi clears attention on `agent_start` and sets it on `agent_settled`. TreeTY core, CLI state, and VS Code rendering remain agent-agnostic; the repository extension composes their generic capabilities.
 
 Opening a terminal can also add its explicitly configured project directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. `TreeTY: Explorer Directory Sync` defaults to `never` and also supports `prompt` or `always`. The terminal context menu exposes `TreeTY: Add Project Directory to VS Code Workspace...` only when a project directory is configured. The confirmation shows the exact absolute path before changing the workspace.
 

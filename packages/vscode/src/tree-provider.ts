@@ -1,6 +1,7 @@
 import * as path from "node:path";
 
 import {
+  getTreeNodeNeedsAttention,
   ResolvedTreeNode,
   TerminalSessionState,
   TerminalStatus,
@@ -31,20 +32,32 @@ interface MessageTreeEntry {
 
 export type TreeEntry = WorkspaceTreeEntry | NodeTreeEntry | MessageTreeEntry;
 
-export class TreeTYTreeProvider implements vscode.TreeDataProvider<TreeEntry> {
+export class TreeTYTreeProvider
+  implements
+    vscode.TreeDataProvider<TreeEntry>,
+    vscode.FileDecorationProvider
+{
   private readonly treeDataChangeEmitter = new vscode.EventEmitter<
     TreeEntry | undefined
   >();
 
   private readonly workspaceModelChangeSubscription: vscode.Disposable;
 
+  private readonly fileDecorationChangeEmitter = new vscode.EventEmitter<
+    vscode.Uri | vscode.Uri[] | undefined
+  >();
+
   public readonly onDidChangeTreeData = this.treeDataChangeEmitter.event;
+
+  public readonly onDidChangeFileDecorations =
+    this.fileDecorationChangeEmitter.event;
 
   public constructor(private readonly workspaceModelSource: WorkspaceModelSource) {
     this.workspaceModelChangeSubscription =
-      workspaceModelSource.onDidChangeWorkspaceModels(() =>
-        this.treeDataChangeEmitter.fire(undefined),
-      );
+      workspaceModelSource.onDidChangeWorkspaceModels(() => {
+        this.treeDataChangeEmitter.fire(undefined);
+        this.fileDecorationChangeEmitter.fire(undefined);
+      });
   }
 
   public getTreeItem(treeEntry: TreeEntry): vscode.TreeItem {
@@ -94,9 +107,42 @@ export class TreeTYTreeProvider implements vscode.TreeDataProvider<TreeEntry> {
     }));
   }
 
+  public provideFileDecoration(
+    uri: vscode.Uri,
+  ): vscode.FileDecoration | undefined {
+    const nodeDecorationTarget = parseNodeDecorationUri(uri);
+
+    if (!nodeDecorationTarget) return undefined;
+
+    const workspaceModel = this.workspaceModelSource
+      .getWorkspaceModels()
+      .find(
+        (candidateWorkspaceModel) =>
+          candidateWorkspaceModel.id === nodeDecorationTarget.workspaceId,
+      );
+
+    if (!workspaceModel || workspaceModel.kind !== "configured") {
+      return undefined;
+    }
+
+    const treeNode = getResolvedTreeNode(
+      workspaceModel.resolvedTreeConfig.tree,
+      nodeDecorationTarget.nodeId,
+    );
+
+    if (!treeNode || !getTreeNodeNeedsAttention(treeNode)) return undefined;
+
+    return new vscode.FileDecoration(
+      "!",
+      "Needs attention",
+      new vscode.ThemeColor("notificationsWarningIcon.foreground"),
+    );
+  }
+
   public dispose(): void {
     this.workspaceModelChangeSubscription.dispose();
     this.treeDataChangeEmitter.dispose();
+    this.fileDecorationChangeEmitter.dispose();
   }
 }
 
@@ -189,6 +235,7 @@ function buildGroupTreeItem(nodeTreeEntry: NodeTreeEntry): vscode.TreeItem {
   );
 
   groupTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
+  groupTreeItem.resourceUri = getNodeDecorationUri(nodeTreeEntry);
   groupTreeItem.iconPath = new vscode.ThemeIcon("folder");
   groupTreeItem.contextValue = "treetyGroup";
   groupTreeItem.tooltip = buildNodeTooltip(nodeTreeEntry);
@@ -209,6 +256,7 @@ function buildTerminalTreeItem(
     .get<boolean>("showStatusDescriptions", true);
 
   terminalTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
+  terminalTreeItem.resourceUri = getNodeDecorationUri(nodeTreeEntry);
   terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}.${nodeTreeEntry.treeNode.projectDir ? "project" : "noProject"}`;
   terminalTreeItem.iconPath = getTerminalStatusIcon(terminalSessionState.status);
   terminalTreeItem.description = showStatusDescriptions
@@ -325,4 +373,45 @@ function getTerminalStatusIcon(terminalStatus: TerminalStatus): vscode.ThemeIcon
 
 function getNodeTreeItemId(nodeTreeEntry: NodeTreeEntry): string {
   return `${nodeTreeEntry.workspaceModel.id}:${nodeTreeEntry.treeNode.id}`;
+}
+
+function getNodeDecorationUri(nodeTreeEntry: NodeTreeEntry): vscode.Uri {
+  return vscode.Uri.from({
+    scheme: "treety",
+    path: `/${encodeURIComponent(nodeTreeEntry.workspaceModel.id)}/${encodeURIComponent(nodeTreeEntry.treeNode.id)}`,
+  });
+}
+
+function parseNodeDecorationUri(
+  uri: vscode.Uri,
+): { nodeId: string; workspaceId: string } | undefined {
+  if (uri.scheme !== "treety") return undefined;
+
+  const uriPathSegments = uri.path.slice(1).split("/");
+  const workspaceId = uriPathSegments[0];
+  const nodeId = uriPathSegments[1];
+
+  if (!workspaceId || !nodeId) return undefined;
+
+  return {
+    workspaceId: decodeURIComponent(workspaceId),
+    nodeId: decodeURIComponent(nodeId),
+  };
+}
+
+function getResolvedTreeNode(
+  treeNodes: ResolvedTreeNode[],
+  nodeId: string,
+): ResolvedTreeNode | undefined {
+  for (const treeNode of treeNodes) {
+    if (treeNode.id === nodeId) return treeNode;
+
+    if (treeNode.kind !== "group") continue;
+
+    const descendantTreeNode = getResolvedTreeNode(treeNode.children, nodeId);
+
+    if (descendantTreeNode) return descendantTreeNode;
+  }
+
+  return undefined;
 }
