@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Add any group or terminal's project directory, live current working directory, or configured working directory to the VS Code workspace on demand.
-- Suggest live terminal directories when configuring working and project directories, including the active descendant terminal for groups, without presenting the global tree's implicit home directory as a live result.
+- Add any group or terminal's project directory, live current working directory, or configured working directory to the VS Code workspace on demand. Groups without a configured directory offer a filterable list of resolved descendant directories.
+- Configure directories through a filterable path field. Terminals offer their live current directory, while groups recursively offer every live descendant directory without depending on the active terminal.
 
 ## 0.1.2 - 2026-08-07
 

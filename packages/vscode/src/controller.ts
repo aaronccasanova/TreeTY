@@ -77,6 +77,36 @@ interface ExplorerDirectory {
   uri: vscode.Uri;
 }
 
+interface DirectorySuggestion {
+  description: string;
+  uri: vscode.Uri;
+}
+
+interface DirectoryQuickPickItem extends vscode.QuickPickItem {
+  dirName: string;
+  uri?: vscode.Uri;
+}
+
+interface DirectoryPickerOptions {
+  allowEmpty: boolean;
+  emptyLabel?: string;
+  initialDirName: string;
+  placeHolder: string;
+  prompt: string;
+  suggestions: readonly DirectorySuggestion[];
+  title: string;
+}
+
+interface DirectorySelection {
+  dirName: string;
+  uri?: vscode.Uri;
+}
+
+interface TerminalTreePath {
+  terminalNode: Extract<ResolvedTreeNode, { kind: "terminal" }>;
+  treePath: string;
+}
+
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
 type GlobalTreeVisibility = "always" | "fallback" | "never";
 
@@ -881,10 +911,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!forceSync && explorerDirectorySyncMode === "never") return;
 
-    const explorerDirectory = this.getExplorerDirectory(
+    const explorerDirectory = await this.getExplorerDirectory(
       nodeTreeEntry,
       forceSync,
     );
+
+    if (explorerDirectory === null) return;
 
     if (!explorerDirectory) {
       if (forceSync) {
@@ -947,10 +979,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
   }
 
-  private getExplorerDirectory(
+  private async getExplorerDirectory(
     nodeTreeEntry: NodeTreeEntry,
     useWorkingDirFallback: boolean,
-  ): ExplorerDirectory | undefined {
+  ): Promise<ExplorerDirectory | null | undefined> {
     if (nodeTreeEntry.treeNode.projectDir) {
       return {
         kind: "project",
@@ -963,7 +995,40 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!useWorkingDirFallback) return undefined;
 
-    const liveCurrentDirUri = this.getLiveNodeCurrentDirUri(nodeTreeEntry);
+    if (nodeTreeEntry.treeNode.kind === "group") {
+      const configuredWorkingDirPath =
+        getConfiguredWorkingDirPath(nodeTreeEntry);
+
+      if (configuredWorkingDirPath) {
+        return {
+          kind: "working",
+          uri: getNodeDirUri(nodeTreeEntry, configuredWorkingDirPath),
+        };
+      }
+
+      const directorySelection = await showDirectoryPicker({
+        allowEmpty: false,
+        initialDirName: "",
+        placeHolder: "Type a path or select a descendant terminal directory",
+        prompt:
+          "Choose a directory reported by a descendant terminal, or enter another relative or absolute path.",
+        suggestions: this.getExplorerDirectorySuggestions(nodeTreeEntry),
+        title: `Add directory for ${nodeTreeEntry.treeNode.name}`,
+      });
+
+      if (!directorySelection) return null;
+
+      return {
+        kind: "working",
+        uri:
+          directorySelection.uri ??
+          resolveNodeDirUri(nodeTreeEntry, directorySelection.dirName),
+      };
+    }
+
+    const liveCurrentDirUri = this.getLiveTerminalCurrentDirUri(
+      nodeTreeEntry,
+    );
 
     if (liveCurrentDirUri) {
       return {
@@ -980,6 +1045,54 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       kind: "working",
       uri: getNodeDirUri(nodeTreeEntry, configuredWorkingDirPath),
     };
+  }
+
+  private getExplorerDirectorySuggestions(
+    nodeTreeEntry: NodeTreeEntry,
+  ): DirectorySuggestion[] {
+    const directorySuggestions: DirectorySuggestion[] = [];
+
+    for (const terminalTreePath of getTerminalTreePaths(
+      nodeTreeEntry.treeNode,
+    )) {
+      const terminalNodeTreeEntry: NodeTreeEntry = {
+        ...nodeTreeEntry,
+        treeNode: terminalTreePath.terminalNode,
+      };
+      const liveCurrentDirUri = this.getLiveTerminalCurrentDirUri(
+        terminalNodeTreeEntry,
+      );
+      const configuredWorkingDirPath = getConfiguredWorkingDirPath(
+        terminalNodeTreeEntry,
+      );
+      const directoryUri = terminalTreePath.terminalNode.projectDir
+        ? getNodeDirUri(
+            terminalNodeTreeEntry,
+            terminalTreePath.terminalNode.projectDir,
+          )
+        : liveCurrentDirUri ??
+          (configuredWorkingDirPath
+            ? getNodeDirUri(
+                terminalNodeTreeEntry,
+                configuredWorkingDirPath,
+              )
+            : undefined);
+
+      if (!directoryUri) continue;
+
+      const directoryKind = terminalTreePath.terminalNode.projectDir
+        ? "project"
+        : liveCurrentDirUri
+          ? "live"
+          : "working";
+
+      directorySuggestions.push({
+        description: `${terminalTreePath.treePath} (${directoryKind})`,
+        uri: directoryUri,
+      });
+    }
+
+    return mergeDirectorySuggestions(directorySuggestions);
   }
 
   private async getConfiguredTreeNodeUpdate(
@@ -1051,8 +1164,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     const currentDirName = treeNodeConfig[propertyName];
+    const liveDirectorySuggestions =
+      this.getLiveDirectorySuggestions(nodeTreeEntry);
     const liveCurrentDirPath =
-      this.getLiveNodeCurrentDirUri(nodeTreeEntry)?.fsPath;
+      nodeTreeEntry.treeNode.kind === "terminal"
+        ? liveDirectorySuggestions[0]?.uri.fsPath
+        : undefined;
     const configuredDirPath =
       propertyName === "projectDir"
         ? nodeTreeEntry.treeNode.projectDir
@@ -1062,56 +1179,69 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       liveCurrentDirPath ??
       configuredDirPath ??
       "";
-    const dirName = await vscode.window.showInputBox({
-      title: `${propertyName === "cwd" ? "Working" : "Project"} directory for ${treeNodeConfig.name}`,
+    const directorySelection = await showDirectoryPicker({
+      allowEmpty: true,
+      emptyLabel:
+        propertyName === "cwd" ? "Inherit" : "Inherit or leave unconfigured",
+      initialDirName: suggestedDirPath,
+      placeHolder: "Type a relative or absolute directory path",
       prompt:
         propertyName === "cwd"
-          ? "Relative paths resolve from the parent working directory. Leave empty to inherit."
-          : "Relative paths resolve from this node's working directory. Leave empty to inherit or remain unconfigured.",
-      placeHolder:
-        suggestedDirPath === ""
-          ? "Live terminal directory unavailable"
-          : undefined,
-      value: suggestedDirPath,
+          ? "Relative paths resolve from the parent working directory. Select a live terminal directory or leave empty to inherit."
+          : "Relative paths resolve from this node's working directory. Select a live terminal directory or leave empty to inherit.",
+      suggestions: liveDirectorySuggestions,
+      title: `${propertyName === "cwd" ? "Working" : "Project"} directory for ${treeNodeConfig.name}`,
     });
 
-    if (dirName === undefined) return undefined;
+    if (!directorySelection) return undefined;
 
     return {
-      [propertyName]: dirName.trim() || null,
+      [propertyName]: directorySelection.dirName.trim() || null,
     };
   }
 
-  private getLiveNodeCurrentDirUri(
+  private getLiveDirectorySuggestions(
+    nodeTreeEntry: NodeTreeEntry,
+  ): DirectorySuggestion[] {
+    const directorySuggestions: DirectorySuggestion[] = [];
+
+    for (const terminalTreePath of getTerminalTreePaths(
+      nodeTreeEntry.treeNode,
+    )) {
+      const terminalNodeTreeEntry: NodeTreeEntry = {
+        ...nodeTreeEntry,
+        treeNode: terminalTreePath.terminalNode,
+      };
+      const currentDirUri = this.getLiveTerminalCurrentDirUri(
+        terminalNodeTreeEntry,
+      );
+
+      if (!currentDirUri) continue;
+
+      directorySuggestions.push({
+        description: terminalTreePath.treePath,
+        uri: currentDirUri,
+      });
+    }
+
+    return mergeDirectorySuggestions(directorySuggestions);
+  }
+
+  private getLiveTerminalCurrentDirUri(
     nodeTreeEntry: NodeTreeEntry,
   ): vscode.Uri | undefined {
-    if (nodeTreeEntry.treeNode.kind === "terminal") {
-      const terminalSessionState = this.getTerminalSessionState(
-        nodeTreeEntry.workspaceModel,
-        nodeTreeEntry.treeNode.id,
-      );
+    if (nodeTreeEntry.treeNode.kind !== "terminal") return undefined;
 
-      if (!terminalSessionState.hostSessionId) return undefined;
-
-      return nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionCurrentDirUri(
-        terminalSessionState.hostSessionId,
-      );
-    }
-
-    const activeTreeTYTerminal =
-      nodeTreeEntry.workspaceModel.vscodeTerminalHost.getActiveTerminal();
-
-    if (!activeTreeTYTerminal) return undefined;
-
-    const descendantTerminalNodeIds = new Set(
-      getTerminalNodeIds(nodeTreeEntry.treeNode),
+    const terminalSessionState = this.getTerminalSessionState(
+      nodeTreeEntry.workspaceModel,
+      nodeTreeEntry.treeNode.id,
     );
 
-    if (!descendantTerminalNodeIds.has(activeTreeTYTerminal.nodeId)) {
-      return undefined;
-    }
+    if (!terminalSessionState.hostSessionId) return undefined;
 
-    return activeTreeTYTerminal.currentDirUri;
+    return nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionCurrentDirUri(
+      terminalSessionState.hostSessionId,
+    );
   }
 
   private async showConfigFile(configFileUri: vscode.Uri): Promise<void> {
@@ -1524,6 +1654,26 @@ function getTerminalNodeIds(treeNode: ResolvedTreeNode): string[] {
   );
 }
 
+function getTerminalTreePaths(
+  treeNode: ResolvedTreeNode,
+  parentNames: readonly string[] = [],
+): TerminalTreePath[] {
+  const treePathNames = [...parentNames, treeNode.name];
+
+  if (treeNode.kind === "terminal") {
+    return [
+      {
+        terminalNode: treeNode,
+        treePath: treePathNames.join(" / "),
+      },
+    ];
+  }
+
+  return treeNode.children.flatMap((childTreeNode) =>
+    getTerminalTreePaths(childTreeNode, treePathNames),
+  );
+}
+
 function getDescendantCount(treeNode: ResolvedTreeNode): number {
   if (treeNode.kind === "terminal") return 0;
 
@@ -1584,6 +1734,146 @@ function getNodeDirUri(
 
   return nodeTreeEntry.workspaceModel.workspaceDirUri.with({
     path: dirPath,
+  });
+}
+
+function resolveNodeDirUri(
+  nodeTreeEntry: NodeTreeEntry,
+  dirName: string,
+): vscode.Uri {
+  const normalizedDirName = dirName.trim();
+  const dirPath = path.isAbsolute(normalizedDirName)
+    ? path.normalize(normalizedDirName)
+    : path.resolve(nodeTreeEntry.treeNode.cwd, normalizedDirName);
+
+  return getNodeDirUri(nodeTreeEntry, dirPath);
+}
+
+function mergeDirectorySuggestions(
+  directorySuggestions: readonly DirectorySuggestion[],
+): DirectorySuggestion[] {
+  const directorySuggestionByUri = new Map<
+    string,
+    { descriptions: string[]; uri: vscode.Uri }
+  >();
+
+  for (const directorySuggestion of directorySuggestions) {
+    const directoryUriKey = directorySuggestion.uri.toString();
+    const existingDirectorySuggestion =
+      directorySuggestionByUri.get(directoryUriKey);
+
+    if (existingDirectorySuggestion) {
+      existingDirectorySuggestion.descriptions.push(
+        directorySuggestion.description,
+      );
+
+      continue;
+    }
+
+    directorySuggestionByUri.set(directoryUriKey, {
+      descriptions: [directorySuggestion.description],
+      uri: directorySuggestion.uri,
+    });
+  }
+
+  return [...directorySuggestionByUri.values()].map(
+    (directorySuggestion) => ({
+      description: directorySuggestion.descriptions.join(", "),
+      uri: directorySuggestion.uri,
+    }),
+  );
+}
+
+async function showDirectoryPicker(
+  directoryPickerOptions: DirectoryPickerOptions,
+): Promise<DirectorySelection | undefined> {
+  const directoryQuickPick =
+    vscode.window.createQuickPick<DirectoryQuickPickItem>();
+  const directorySuggestionItems = directoryPickerOptions.suggestions.map(
+    (directorySuggestion): DirectoryQuickPickItem => ({
+      description: directorySuggestion.description,
+      detail: directorySuggestion.uri.fsPath,
+      dirName: directorySuggestion.uri.fsPath,
+      label: `$(folder) ${formatDisplayPath(directorySuggestion.uri.fsPath)}`,
+      uri: directorySuggestion.uri,
+    }),
+  );
+  let isResolved = false;
+
+  const refreshDirectoryQuickPickItems = (): void => {
+    const dirName = directoryQuickPick.value;
+    const trimmedDirName = dirName.trim();
+    const customDirectoryQuickPickItem: DirectoryQuickPickItem = {
+      alwaysShow: true,
+      description: trimmedDirName ? "Custom path" : undefined,
+      dirName,
+      label: trimmedDirName
+        ? `$(edit) Use "${trimmedDirName}"`
+        : `$(circle-slash) ${directoryPickerOptions.emptyLabel ?? "Type a directory path"}`,
+    };
+
+    directoryQuickPick.items = [
+      customDirectoryQuickPickItem,
+      ...directorySuggestionItems,
+    ];
+    directoryQuickPick.activeItems = [customDirectoryQuickPickItem];
+  };
+
+  directoryQuickPick.title = directoryPickerOptions.title;
+  directoryQuickPick.placeholder = directoryPickerOptions.placeHolder;
+  directoryQuickPick.prompt = directoryPickerOptions.prompt;
+  directoryQuickPick.matchOnDescription = true;
+  directoryQuickPick.matchOnDetail = true;
+  directoryQuickPick.value = directoryPickerOptions.initialDirName;
+
+  refreshDirectoryQuickPickItems();
+
+  return new Promise((resolve) => {
+    const resolveDirectoryPicker = (
+      directorySelection?: DirectorySelection,
+    ): void => {
+      if (isResolved) return;
+
+      isResolved = true;
+      resolve(directorySelection);
+      directoryQuickPick.hide();
+    };
+
+    directoryQuickPick.onDidChangeValue(refreshDirectoryQuickPickItems);
+
+    directoryQuickPick.onDidAccept(() => {
+      const directoryQuickPickItem =
+        directoryQuickPick.selectedItems[0] ??
+        directoryQuickPick.activeItems[0];
+
+      if (!directoryQuickPickItem) return;
+
+      if (
+        !directoryPickerOptions.allowEmpty &&
+        directoryQuickPickItem.dirName.trim() === ""
+      ) {
+        directoryQuickPick.placeholder =
+          "Enter a directory path or select a suggestion";
+
+        return;
+      }
+
+      resolveDirectoryPicker({
+        dirName: directoryQuickPickItem.dirName,
+        uri: directoryQuickPickItem.uri,
+      });
+    });
+
+    directoryQuickPick.onDidHide(() => {
+      if (!isResolved) {
+        isResolved = true;
+        resolve(undefined);
+      }
+
+      directoryQuickPick.dispose();
+    });
+
+    directoryQuickPick.show();
   });
 }
 
