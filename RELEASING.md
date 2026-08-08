@@ -12,17 +12,19 @@ Publish releases in this order:
 
 The CLI depends on the exact workspace version of core. pnpm replaces `workspace:*` with that version when it packs or publishes the CLI. The VS Code extension bundles core, so it does not depend on npm availability at runtime.
 
-The private `@treety/pi` package is not published separately. It starts at `0.0.0` and ships with the repository through the root Pi package manifest.
+The private `@treety/pi` package is not published separately. It ships with the repository through the root Pi package manifest. Keep its workspace version synchronized with the root package version so Pi can detect Git package updates.
 
 ## Prepare the release
 
 Update these versions before publishing:
 
+- `package.json`
 - `packages/core/package.json`
 - `packages/cli/package.json`
+- `packages/pi/package.json`
 - `packages/vscode/package.json`
 
-Keep `packages/cli/src/cli.ts`, its version test, the root README, and the VS Code changelog synchronized with those versions. Keep the private Pi integration at `0.0.0` until it has an independent release channel.
+Only bump deliverables changed by the release. Keep the root Pi package and `packages/pi/package.json` at the same version. Keep `packages/cli/src/cli.ts`, its version test, the root README, and the VS Code changelog synchronized with the relevant package versions.
 
 Update the relevant package changelogs and documentation in the same commit. Commit and push the release state to `main`, then confirm the worktree is clean and synchronized with `origin/main`.
 

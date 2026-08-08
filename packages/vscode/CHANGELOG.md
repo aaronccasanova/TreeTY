@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 - 2026-08-08
 
 - Capture Pi's current working directory during `/treety-setup` so resumed sessions restart from the same directory.
 - Add a **Collapse All** action to the terminal tree toolbar and Command Palette.
