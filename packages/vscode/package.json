@@ -93,19 +93,19 @@
       },
       {
         "command": "treety.configureNode",
-        "title": "Configure Node...",
+        "title": "Configure",
         "category": "TreeTY",
         "icon": "$(settings-gear)"
       },
       {
         "command": "treety.moveNode",
-        "title": "Move...",
+        "title": "Move",
         "category": "TreeTY",
         "icon": "$(type-hierarchy-sub)"
       },
       {
         "command": "treety.showNodeActions",
-        "title": "Actions...",
+        "title": "Actions",
         "category": "TreeTY",
         "icon": "$(gear)"
       },
@@ -237,12 +237,12 @@
       ],
       "view/item/context": [
         {
-          "command": "treety.showNodeActions",
+          "command": "treety.deleteNode",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "inline@1"
         },
         {
-          "command": "treety.deleteNode",
+          "command": "treety.showNodeActions",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "inline@2"
         },
@@ -272,12 +272,12 @@
           "group": "inline@2"
         },
         {
-          "command": "treety.showNodeActions",
+          "command": "treety.deleteNode",
           "when": "view == treety.terminals && viewItem == treetyGroup",
           "group": "inline@3"
         },
         {
-          "command": "treety.deleteNode",
+          "command": "treety.showNodeActions",
           "when": "view == treety.terminals && viewItem == treetyGroup",
           "group": "inline@4"
         },

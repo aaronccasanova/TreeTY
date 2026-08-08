@@ -345,20 +345,35 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   }
 
   public async showNodeActions(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    const nodeActionQuickPickItems: NodeActionQuickPickItem[] = [
+    const nodeActionQuickPickItems: NodeActionQuickPickItem[] = [];
+
+    if (nodeTreeEntry.treeNode.kind === "group") {
+      nodeActionQuickPickItems.push(
+        {
+          execute: () => this.createTerminal(nodeTreeEntry),
+          label: "$(add) Create terminal",
+        },
+        {
+          execute: () => this.createGroup(nodeTreeEntry),
+          label: "$(new-folder) Create group",
+        },
+      );
+    }
+
+    nodeActionQuickPickItems.push(
       {
         execute: () => this.renameNode(nodeTreeEntry),
         label: "$(edit) Rename",
       },
       {
         execute: () => this.configureNode(nodeTreeEntry),
-        label: "$(settings-gear) Configure...",
+        label: "$(settings-gear) Configure",
       },
       {
         execute: () => this.moveNode(nodeTreeEntry),
-        label: "$(type-hierarchy-sub) Move...",
+        label: "$(type-hierarchy-sub) Move",
       },
-    ];
+    );
 
     if (nodeTreeEntry.treeNode.kind === "terminal") {
       const terminalSessionState = this.getTerminalSessionState(
@@ -386,10 +401,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         nodeActionQuickPickItems.push({
           execute: () =>
             this.addTerminalDirectoryToWorkspace(nodeTreeEntry),
-          label: "$(folder-library) Add project directory to workspace...",
+          label: "$(folder-library) Add project directory to workspace",
         });
       }
     }
+
+    nodeActionQuickPickItems.push({
+      execute: () => this.deleteNode(nodeTreeEntry),
+      label: "$(trash) Delete",
+    });
 
     const nodeActionQuickPickItem = await vscode.window.showQuickPick(
       nodeActionQuickPickItems,
@@ -1310,13 +1330,16 @@ function appendMoveTreeQuickPickItems(
     const moveTreeQuickPickButtons = isSourceTreeNode
       ? undefined
       : getMoveTreeQuickPickButtons(treeNode);
+    const moveTreeNodeIndentation = "  ".repeat(
+      depth + (treeNode.kind === "terminal" ? 1 : 0),
+    );
 
     moveTreeQuickPickItems.push({
       buttons: moveTreeQuickPickButtons,
       containerId: treeNode.kind === "group" ? treeNode.id : undefined,
       description: treeNode.id === sourceTreeNodeId ? "moving" : parentPath,
       isContainer: treeNode.kind === "group",
-      label: `${"  ".repeat(depth)}${getMoveTreeNodeLabelIcon(treeNode, isGroupExpanded)} ${treeNode.name}`,
+      label: `${moveTreeNodeIndentation}${getMoveTreeNodeLabelIcon(treeNode, isGroupExpanded)} ${treeNode.name}`,
       treeNode,
     });
 
@@ -1339,6 +1362,7 @@ function getMoveTreeQuickPickButtons(
 ): MoveTreeQuickPickButton[] {
   const moveTreeQuickPickButtons = [
     getMoveTreeQuickPickButton("before", treeNode.name),
+    getMoveTreeQuickPickButton("after", treeNode.name),
   ];
 
   if (treeNode.kind === "group") {
@@ -1346,10 +1370,6 @@ function getMoveTreeQuickPickButtons(
       getMoveTreeQuickPickButton("inside", treeNode.name),
     );
   }
-
-  moveTreeQuickPickButtons.push(
-    getMoveTreeQuickPickButton("after", treeNode.name),
-  );
 
   return moveTreeQuickPickButtons;
 }
