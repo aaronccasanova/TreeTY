@@ -198,7 +198,7 @@ Terminal rows open or reveal their native terminal when selected. Hover controls
 
 Move uses a searchable, collapsible representation of the tree with inline controls on each destination. The tree starts fully expanded, and its top-right controls expand or collapse everything. Insert above or below any node, or move inside a root or group. The editor stays to one row per node and supports terminals, whole groups, and cross-group moves. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes; removed leaves close their matching sessions.
 
-Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` adds a small `!` decoration to a terminal and its ancestor groups. Opening or revealing that terminal clears attention.
+Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` or the terminal's VS Code actions gear adds a small `!` decoration to a terminal and its ancestor groups. The gear can also clear attention. Opening or revealing that terminal clears it automatically.
 
 ## Pi integration
 

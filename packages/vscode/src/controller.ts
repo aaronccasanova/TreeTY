@@ -421,6 +421,22 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         nodeTreeEntry.workspaceModel,
         nodeTreeEntry.treeNode.id,
       );
+      const terminalNeedsAttention = Boolean(
+        nodeTreeEntry.workspaceModel.treeState.nodes[
+          nodeTreeEntry.treeNode.id
+        ],
+      );
+
+      nodeActionQuickPickItems.push({
+        execute: () =>
+          this.setTerminalAttention(
+            nodeTreeEntry,
+            !terminalNeedsAttention,
+          ),
+        label: terminalNeedsAttention
+          ? "$(bell-slash) Clear attention"
+          : "$(bell) Mark as needing attention",
+      });
 
       nodeActionQuickPickItems.push({
         execute: () => this.restartTerminal(nodeTreeEntry),
@@ -497,7 +513,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public async openTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
-    await this.clearTerminalAttention(nodeTreeEntry);
+    await this.setTerminalAttention(nodeTreeEntry, false);
     await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
       nodeTreeEntry.treeNode.id,
     );
@@ -507,7 +523,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
-    await this.clearTerminalAttention(nodeTreeEntry);
+    await this.setTerminalAttention(nodeTreeEntry, false);
     await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
       nodeTreeEntry.treeNode.id,
     );
@@ -913,20 +929,22 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
-  private async clearTerminalAttention(
+  private async setTerminalAttention(
     nodeTreeEntry: NodeTreeEntry,
+    needsAttention: boolean,
   ): Promise<void> {
-    if (
-      nodeTreeEntry.treeNode.kind !== "terminal" ||
-      !nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id]
-    ) {
-      return;
-    }
+    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+
+    const terminalNeedsAttention = Boolean(
+      nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id],
+    );
+
+    if (terminalNeedsAttention === needsAttention) return;
 
     await setTreeNodeAttention(
       nodeTreeEntry.workspaceModel.configFileUri.fsPath,
       nodeTreeEntry.treeNode.id,
-      false,
+      needsAttention,
     );
     await this.queueWorkspaceOperation(() =>
       this.reconcileWorkspace(

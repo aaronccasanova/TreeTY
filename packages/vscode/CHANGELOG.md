@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an actions gear toggle for manually marking or clearing a terminal's durable attention.
 - Prevent attention decorations from flickering when opening other terminals by skipping unchanged state writes and invalidating only affected terminal and ancestor decorations.
 
 ## 0.1.3 - 2026-08-07
