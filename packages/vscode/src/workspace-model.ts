@@ -7,6 +7,8 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import type { VscodeTerminalHost } from "./vscode-terminal-host";
+
 export type TreeConfigSource = "global" | "workspace";
 
 interface WorkspaceModelBase {
@@ -25,6 +27,7 @@ export interface ConfiguredWorkspaceModel extends WorkspaceModelBase {
   treeState: TreeState;
   resolvedTreeConfig: ResolvedTreeConfig;
   treeTYEngine: TreeTYEngine;
+  vscodeTerminalHost: VscodeTerminalHost;
 }
 
 export interface UnconfiguredWorkspaceModel extends WorkspaceModelBase {

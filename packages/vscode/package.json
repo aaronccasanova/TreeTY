@@ -134,8 +134,8 @@
         "icon": "$(debug-stop)"
       },
       {
-        "command": "treety.addTerminalDirectoryToWorkspace",
-        "title": "Add Project Directory to VS Code Workspace...",
+        "command": "treety.addDirectoryToWorkspace",
+        "title": "Add Directory to VS Code Workspace...",
         "category": "TreeTY",
         "icon": "$(folder-library)"
       }
@@ -322,8 +322,8 @@
           "group": "modification@4"
         },
         {
-          "command": "treety.addTerminalDirectoryToWorkspace",
-          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\..*\\.project$/",
+          "command": "treety.addDirectoryToWorkspace",
+          "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
           "group": "workspace@1"
         }
       ],
@@ -361,7 +361,7 @@
           "when": "false"
         },
         {
-          "command": "treety.addTerminalDirectoryToWorkspace",
+          "command": "treety.addDirectoryToWorkspace",
           "when": "false"
         }
       ]

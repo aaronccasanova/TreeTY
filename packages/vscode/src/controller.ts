@@ -319,6 +319,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (!configurationItem) return;
 
     const treeNodeUpdate = await this.getConfiguredTreeNodeUpdate(
+      nodeTreeEntry,
       treeNodeConfig,
       configurationItem.propertyName,
     );
@@ -398,15 +399,16 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
           label: "$(debug-stop) Stop terminal",
         });
       }
-
-      if (nodeTreeEntry.treeNode.projectDir) {
-        nodeActionQuickPickItems.push({
-          execute: () =>
-            this.addTerminalDirectoryToWorkspace(nodeTreeEntry),
-          label: "$(folder-library) Add project directory to workspace",
-        });
-      }
     }
+
+    const workspaceDirectoryKind = nodeTreeEntry.treeNode.projectDir
+      ? "project"
+      : "working";
+
+    nodeActionQuickPickItems.push({
+      execute: () => this.addNodeDirectoryToWorkspace(nodeTreeEntry),
+      label: `$(folder-library) Add ${workspaceDirectoryKind} directory to workspace`,
+    });
 
     nodeActionQuickPickItems.push({
       execute: () => this.deleteNode(nodeTreeEntry),
@@ -465,7 +467,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
       nodeTreeEntry.treeNode.id,
     );
-    await this.syncProjectDirectory(nodeTreeEntry, false);
+    await this.syncExplorerDirectory(nodeTreeEntry, false);
   }
 
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -475,15 +477,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
       nodeTreeEntry.treeNode.id,
     );
-    await this.syncProjectDirectory(nodeTreeEntry, false);
+    await this.syncExplorerDirectory(nodeTreeEntry, false);
   }
 
-  public async addTerminalDirectoryToWorkspace(
+  public async addNodeDirectoryToWorkspace(
     nodeTreeEntry: NodeTreeEntry,
   ): Promise<void> {
-    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
-
-    await this.syncProjectDirectory(nodeTreeEntry, true);
+    await this.syncExplorerDirectory(nodeTreeEntry, true);
   }
 
   public async stopTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -768,6 +768,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         treeState,
         resolvedTreeConfig,
         treeTYEngine,
+        vscodeTerminalHost,
       };
     } catch (error) {
       return {
@@ -869,7 +870,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
-  private async syncProjectDirectory(
+  private async syncExplorerDirectory(
     nodeTreeEntry: NodeTreeEntry,
     forceSync: boolean,
   ): Promise<void> {
@@ -879,34 +880,32 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!forceSync && explorerDirectorySyncMode === "never") return;
 
-    const projectDirUri = getProjectDirUri(nodeTreeEntry);
+    const explorerDirUri = getExplorerDirUri(nodeTreeEntry, forceSync);
 
-    if (!projectDirUri) {
+    if (!explorerDirUri) {
+      return;
+    }
+
+    const directoryKind = nodeTreeEntry.treeNode.projectDir
+      ? "project"
+      : "working";
+
+    if (getUriIsInWorkspace(explorerDirUri)) {
       if (forceSync) {
         void vscode.window.showInformationMessage(
-          `Configure a project directory for "${nodeTreeEntry.treeNode.name}" before adding it to the VS Code workspace.`,
+          `${formatDisplayPath(explorerDirUri.fsPath)} is already in the VS Code workspace.`,
         );
       }
 
       return;
     }
 
-    if (getUriIsInWorkspace(projectDirUri)) {
-      if (forceSync) {
-        void vscode.window.showInformationMessage(
-          `${formatDisplayPath(projectDirUri.fsPath)} is already in the VS Code workspace.`,
-        );
-      }
+    const explorerDirectoryExists = await getDirectoryExists(explorerDirUri);
 
-      return;
-    }
-
-    const projectDirectoryExists = await getDirectoryExists(projectDirUri);
-
-    if (!projectDirectoryExists) {
+    if (!explorerDirectoryExists) {
       if (forceSync) {
         void vscode.window.showWarningMessage(
-          `TreeTY project directory does not exist: ${projectDirUri.fsPath}`,
+          `TreeTY ${directoryKind} directory does not exist: ${explorerDirUri.fsPath}`,
         );
       }
 
@@ -915,10 +914,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (forceSync || explorerDirectorySyncMode === "prompt") {
       const confirmation = await vscode.window.showInformationMessage(
-        `Add this project directory to the VS Code workspace?`,
+        `Add this ${directoryKind} directory to the VS Code workspace?`,
         {
           modal: true,
-          detail: projectDirUri.fsPath,
+          detail: explorerDirUri.fsPath,
         },
         "Add folder",
       );
@@ -930,17 +929,18 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     const workspaceUpdated = vscode.workspace.updateWorkspaceFolders(
       workspaceFolderCount,
       null,
-      { uri: projectDirUri },
+      { uri: explorerDirUri },
     );
 
     if (!workspaceUpdated) {
       throw new Error(
-        `Could not add "${projectDirUri.fsPath}" to the VS Code workspace.`,
+        `Could not add "${explorerDirUri.fsPath}" to the VS Code workspace.`,
       );
     }
   }
 
   private async getConfiguredTreeNodeUpdate(
+    nodeTreeEntry: NodeTreeEntry,
     treeNodeConfig: TreeNodeConfig,
     propertyName: "cwd" | "env" | "metadata" | "projectDir" | "restartPolicy",
   ): Promise<Omit<UpdateTreeNodeOptions, "nodeId"> | undefined> {
@@ -1008,13 +1008,20 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     const currentDirName = treeNodeConfig[propertyName];
+    const suggestedDirPath =
+      currentDirName ??
+      this.getLiveNodeCurrentDirPath(nodeTreeEntry) ??
+      (propertyName === "projectDir"
+        ? nodeTreeEntry.treeNode.projectDir
+        : undefined) ??
+      nodeTreeEntry.treeNode.cwd;
     const dirName = await vscode.window.showInputBox({
       title: `${propertyName === "cwd" ? "Working" : "Project"} directory for ${treeNodeConfig.name}`,
       prompt:
         propertyName === "cwd"
           ? "Relative paths resolve from the parent working directory. Leave empty to inherit."
           : "Relative paths resolve from this node's working directory. Leave empty to inherit or remain unconfigured.",
-      value: currentDirName ?? "",
+      value: suggestedDirPath,
     });
 
     if (dirName === undefined) return undefined;
@@ -1022,6 +1029,38 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     return {
       [propertyName]: dirName.trim() || null,
     };
+  }
+
+  private getLiveNodeCurrentDirPath(
+    nodeTreeEntry: NodeTreeEntry,
+  ): string | undefined {
+    if (nodeTreeEntry.treeNode.kind === "terminal") {
+      const terminalSessionState = this.getTerminalSessionState(
+        nodeTreeEntry.workspaceModel,
+        nodeTreeEntry.treeNode.id,
+      );
+
+      if (!terminalSessionState.hostSessionId) return undefined;
+
+      return nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionCurrentDirPath(
+        terminalSessionState.hostSessionId,
+      );
+    }
+
+    const activeTreeTYTerminal =
+      nodeTreeEntry.workspaceModel.vscodeTerminalHost.getActiveTerminal();
+
+    if (!activeTreeTYTerminal) return undefined;
+
+    const descendantTerminalNodeIds = new Set(
+      getTerminalNodeIds(nodeTreeEntry.treeNode),
+    );
+
+    if (!descendantTerminalNodeIds.has(activeTreeTYTerminal.nodeId)) {
+      return undefined;
+    }
+
+    return activeTreeTYTerminal.currentDirPath;
   }
 
   private async showConfigFile(configFileUri: vscode.Uri): Promise<void> {
@@ -1484,15 +1523,22 @@ function closeRemovedTerminalSessions(
   }
 }
 
-function getProjectDirUri(nodeTreeEntry: NodeTreeEntry): vscode.Uri | undefined {
-  if (!nodeTreeEntry.treeNode.projectDir) return undefined;
+function getExplorerDirUri(
+  nodeTreeEntry: NodeTreeEntry,
+  useWorkingDirFallback: boolean,
+): vscode.Uri | undefined {
+  const projectDirPath =
+    nodeTreeEntry.treeNode.projectDir ??
+    (useWorkingDirFallback ? nodeTreeEntry.treeNode.cwd : undefined);
+
+  if (!projectDirPath) return undefined;
 
   if (nodeTreeEntry.workspaceModel.workspaceDirUri.scheme === "file") {
-    return vscode.Uri.file(nodeTreeEntry.treeNode.projectDir);
+    return vscode.Uri.file(projectDirPath);
   }
 
   return nodeTreeEntry.workspaceModel.workspaceDirUri.with({
-    path: nodeTreeEntry.treeNode.projectDir,
+    path: projectDirPath,
   });
 }
 

@@ -257,7 +257,7 @@ function buildTerminalTreeItem(
 
   terminalTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
   terminalTreeItem.resourceUri = getNodeDecorationUri(nodeTreeEntry);
-  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}.${nodeTreeEntry.treeNode.projectDir ? "project" : "noProject"}`;
+  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}`;
   terminalTreeItem.iconPath = getTerminalStatusIcon(terminalSessionState.status);
   terminalTreeItem.description = showStatusDescriptions
     ? terminalSessionState.status

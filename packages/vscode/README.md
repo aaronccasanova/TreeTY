@@ -12,7 +12,9 @@ Move opens a searchable representation of the tree with every group expanded. Se
 
 Durable attention from `.treety/state.json` appears as a small `!` file decoration without replacing the lifecycle icon or description. The decoration propagates to ancestor groups and clears when the terminal is opened or revealed.
 
-`TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its configured project directory to the VS Code workspace. It defaults to `never` and also supports `prompt` and `always`. The terminal context menu exposes an explicit add-project-directory command only when the leaf has an inherited or direct `projectDir`; its confirmation shows the exact path.
+`TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its configured project directory to the VS Code workspace. It defaults to `never` and also supports `prompt` and `always`. Every group and terminal exposes an explicit add-directory action. It adds the resolved project directory when one is configured, otherwise it adds the resolved working directory. The confirmation shows the exact path.
+
+Configure suggests the current directory reported by VS Code shell integration when a terminal is live. For groups, it uses the active terminal when that terminal belongs to the group's subtree. When live directory information isn't available, it suggests the node's resolved directory.
 
 `TreeTY: Global Tree Visibility` shows local and global roots together by default. It can instead keep the global tree as a fallback or hide it while folders are open. Empty windows always load the global root.
 
