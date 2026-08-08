@@ -107,6 +107,12 @@ export class VscodeTerminalHost implements TerminalHost {
     terminal.dispose();
   }
 
+  public getSessionCurrentDirUri(
+    hostSessionId: string,
+  ): vscode.Uri | undefined {
+    return this.terminalBySessionId.get(hostSessionId)?.shellIntegration?.cwd;
+  }
+
   public subscribe(
     terminalHostEventListener: TerminalHostEventListener,
   ): Disposable {
