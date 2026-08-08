@@ -6,6 +6,7 @@ import registerTreeTYExtension, { assertTreeTYEnvironment } from "./extension";
 type PiEventName = "agent_settled" | "agent_start" | "session_start";
 
 interface PiExtensionContext {
+  cwd: string;
   sessionManager: {
     getSessionId(): string;
   };
@@ -55,6 +56,7 @@ test.test("sets up session resume without PI_SESSION_ID", async () => {
 
     const notifications: string[] = [];
     const extensionContext = {
+      cwd: "/workspace/packages/cli",
       sessionManager: {
         getSessionId: () => "pi-session-123",
       },
@@ -80,6 +82,8 @@ test.test("sets up session resume without PI_SESSION_ID", async () => {
       [
         "treety",
         "configure",
+        "--cwd",
+        "/workspace/packages/cli",
         "--",
         "pi",
         "--session",
@@ -131,6 +135,7 @@ test.test("enables lifecycle signaling for an already linked session", async () 
     });
 
     const extensionContext = {
+      cwd: "/workspace",
       sessionManager: {
         getSessionId: () => "pi-session-456",
       },
@@ -189,6 +194,7 @@ test.test("recomputes lifecycle signaling after reload and resume", async () => 
     });
 
     const extensionContext = {
+      cwd: "/workspace",
       sessionManager: {
         getSessionId: () => "pi-session-789",
       },
@@ -252,6 +258,7 @@ test.test("disables lifecycle signaling after session replacement", async () => 
     });
 
     const extensionContext = {
+      cwd: "/workspace",
       sessionManager: {
         getSessionId: () => "pi-session-replacement",
       },
@@ -295,6 +302,7 @@ test.test("does not write link metadata when command setup fails", async () => {
 
     await assert.rejects(
       registeredCommand.handler("", {
+        cwd: "/workspace/packages/pi",
         sessionManager: {
           getSessionId: () => "pi-session-failed",
         },
@@ -309,6 +317,8 @@ test.test("does not write link metadata when command setup fails", async () => {
       [
         "treety",
         "configure",
+        "--cwd",
+        "/workspace/packages/pi",
         "--",
         "pi",
         "--session",
