@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Add any group or terminal's project directory, or its working directory as a fallback, to the VS Code workspace on demand.
-- Suggest live terminal directories when configuring working and project directories, including the active descendant terminal for groups.
+- Add any group or terminal's project directory, live current working directory, or configured working directory to the VS Code workspace on demand.
+- Suggest live terminal directories when configuring working and project directories, including the active descendant terminal for groups, without presenting the global tree's implicit home directory as a live result.
 
 ## 0.1.2 - 2026-08-07
 

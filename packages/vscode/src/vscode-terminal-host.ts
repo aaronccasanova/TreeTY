@@ -23,7 +23,7 @@ interface TerminalMetadata {
 
 export interface ActiveTreeTYTerminal {
   nodeId: string;
-  currentDirPath: string;
+  currentDirUri: vscode.Uri;
 }
 
 const workspaceIdEnvironmentName = "TREETY_WORKSPACE_ID";
@@ -112,11 +112,10 @@ export class VscodeTerminalHost implements TerminalHost {
     terminal.dispose();
   }
 
-  public getSessionCurrentDirPath(
+  public getSessionCurrentDirUri(
     hostSessionId: string,
-  ): string | undefined {
-    return this.terminalBySessionId.get(hostSessionId)?.shellIntegration?.cwd
-      ?.fsPath;
+  ): vscode.Uri | undefined {
+    return this.terminalBySessionId.get(hostSessionId)?.shellIntegration?.cwd;
   }
 
   public getActiveTerminal(): ActiveTreeTYTerminal | undefined {
@@ -125,19 +124,19 @@ export class VscodeTerminalHost implements TerminalHost {
     if (!activeTerminal) return undefined;
 
     const terminalMetadata = getTerminalMetadata(activeTerminal);
-    const currentDirPath = activeTerminal.shellIntegration?.cwd?.fsPath;
+    const currentDirUri = activeTerminal.shellIntegration?.cwd;
 
     if (
       !terminalMetadata ||
       terminalMetadata.workspaceId !== this.workspaceId ||
-      !currentDirPath
+      !currentDirUri
     ) {
       return undefined;
     }
 
     return {
       nodeId: terminalMetadata.nodeId,
-      currentDirPath,
+      currentDirUri,
     };
   }
 

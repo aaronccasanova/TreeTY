@@ -72,6 +72,11 @@ interface NodeActionQuickPickItem extends vscode.QuickPickItem {
   execute: () => Promise<void>;
 }
 
+interface ExplorerDirectory {
+  kind: "current working" | "project" | "working";
+  uri: vscode.Uri;
+}
+
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
 type GlobalTreeVisibility = "always" | "fallback" | "never";
 
@@ -401,13 +406,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       }
     }
 
-    const workspaceDirectoryKind = nodeTreeEntry.treeNode.projectDir
-      ? "project"
-      : "working";
-
     nodeActionQuickPickItems.push({
       execute: () => this.addNodeDirectoryToWorkspace(nodeTreeEntry),
-      label: `$(folder-library) Add ${workspaceDirectoryKind} directory to workspace`,
+      label: "$(folder-library) Add directory to workspace...",
     });
 
     nodeActionQuickPickItems.push({
@@ -880,15 +881,22 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!forceSync && explorerDirectorySyncMode === "never") return;
 
-    const explorerDirUri = getExplorerDirUri(nodeTreeEntry, forceSync);
+    const explorerDirectory = this.getExplorerDirectory(
+      nodeTreeEntry,
+      forceSync,
+    );
 
-    if (!explorerDirUri) {
+    if (!explorerDirectory) {
+      if (forceSync) {
+        void vscode.window.showWarningMessage(
+          "VS Code could not determine a current working directory for this node. Open its TreeTY terminal and make sure shell integration is enabled, or configure a working or project directory in TreeTY.",
+        );
+      }
+
       return;
     }
 
-    const directoryKind = nodeTreeEntry.treeNode.projectDir
-      ? "project"
-      : "working";
+    const explorerDirUri = explorerDirectory.uri;
 
     if (getUriIsInWorkspace(explorerDirUri)) {
       if (forceSync) {
@@ -905,7 +913,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (!explorerDirectoryExists) {
       if (forceSync) {
         void vscode.window.showWarningMessage(
-          `TreeTY ${directoryKind} directory does not exist: ${explorerDirUri.fsPath}`,
+          `TreeTY ${explorerDirectory.kind} directory does not exist: ${explorerDirUri.fsPath}`,
         );
       }
 
@@ -914,7 +922,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (forceSync || explorerDirectorySyncMode === "prompt") {
       const confirmation = await vscode.window.showInformationMessage(
-        `Add this ${directoryKind} directory to the VS Code workspace?`,
+        `Add this ${explorerDirectory.kind} directory to the VS Code workspace?`,
         {
           modal: true,
           detail: explorerDirUri.fsPath,
@@ -937,6 +945,41 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         `Could not add "${explorerDirUri.fsPath}" to the VS Code workspace.`,
       );
     }
+  }
+
+  private getExplorerDirectory(
+    nodeTreeEntry: NodeTreeEntry,
+    useWorkingDirFallback: boolean,
+  ): ExplorerDirectory | undefined {
+    if (nodeTreeEntry.treeNode.projectDir) {
+      return {
+        kind: "project",
+        uri: getNodeDirUri(
+          nodeTreeEntry,
+          nodeTreeEntry.treeNode.projectDir,
+        ),
+      };
+    }
+
+    if (!useWorkingDirFallback) return undefined;
+
+    const liveCurrentDirUri = this.getLiveNodeCurrentDirUri(nodeTreeEntry);
+
+    if (liveCurrentDirUri) {
+      return {
+        kind: "current working",
+        uri: liveCurrentDirUri,
+      };
+    }
+
+    const configuredWorkingDirPath = getConfiguredWorkingDirPath(nodeTreeEntry);
+
+    if (!configuredWorkingDirPath) return undefined;
+
+    return {
+      kind: "working",
+      uri: getNodeDirUri(nodeTreeEntry, configuredWorkingDirPath),
+    };
   }
 
   private async getConfiguredTreeNodeUpdate(
@@ -1008,19 +1051,27 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     const currentDirName = treeNodeConfig[propertyName];
+    const liveCurrentDirPath =
+      this.getLiveNodeCurrentDirUri(nodeTreeEntry)?.fsPath;
+    const configuredDirPath =
+      propertyName === "projectDir"
+        ? nodeTreeEntry.treeNode.projectDir
+        : getConfiguredWorkingDirPath(nodeTreeEntry);
     const suggestedDirPath =
       currentDirName ??
-      this.getLiveNodeCurrentDirPath(nodeTreeEntry) ??
-      (propertyName === "projectDir"
-        ? nodeTreeEntry.treeNode.projectDir
-        : undefined) ??
-      nodeTreeEntry.treeNode.cwd;
+      liveCurrentDirPath ??
+      configuredDirPath ??
+      "";
     const dirName = await vscode.window.showInputBox({
       title: `${propertyName === "cwd" ? "Working" : "Project"} directory for ${treeNodeConfig.name}`,
       prompt:
         propertyName === "cwd"
           ? "Relative paths resolve from the parent working directory. Leave empty to inherit."
           : "Relative paths resolve from this node's working directory. Leave empty to inherit or remain unconfigured.",
+      placeHolder:
+        suggestedDirPath === ""
+          ? "Live terminal directory unavailable"
+          : undefined,
       value: suggestedDirPath,
     });
 
@@ -1031,9 +1082,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     };
   }
 
-  private getLiveNodeCurrentDirPath(
+  private getLiveNodeCurrentDirUri(
     nodeTreeEntry: NodeTreeEntry,
-  ): string | undefined {
+  ): vscode.Uri | undefined {
     if (nodeTreeEntry.treeNode.kind === "terminal") {
       const terminalSessionState = this.getTerminalSessionState(
         nodeTreeEntry.workspaceModel,
@@ -1042,7 +1093,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
       if (!terminalSessionState.hostSessionId) return undefined;
 
-      return nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionCurrentDirPath(
+      return nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionCurrentDirUri(
         terminalSessionState.hostSessionId,
       );
     }
@@ -1060,7 +1111,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       return undefined;
     }
 
-    return activeTreeTYTerminal.currentDirPath;
+    return activeTreeTYTerminal.currentDirUri;
   }
 
   private async showConfigFile(configFileUri: vscode.Uri): Promise<void> {
@@ -1523,23 +1574,63 @@ function closeRemovedTerminalSessions(
   }
 }
 
-function getExplorerDirUri(
+function getNodeDirUri(
   nodeTreeEntry: NodeTreeEntry,
-  useWorkingDirFallback: boolean,
-): vscode.Uri | undefined {
-  const projectDirPath =
-    nodeTreeEntry.treeNode.projectDir ??
-    (useWorkingDirFallback ? nodeTreeEntry.treeNode.cwd : undefined);
-
-  if (!projectDirPath) return undefined;
-
+  dirPath: string,
+): vscode.Uri {
   if (nodeTreeEntry.workspaceModel.workspaceDirUri.scheme === "file") {
-    return vscode.Uri.file(projectDirPath);
+    return vscode.Uri.file(dirPath);
   }
 
   return nodeTreeEntry.workspaceModel.workspaceDirUri.with({
-    path: projectDirPath,
+    path: dirPath,
   });
+}
+
+function getConfiguredWorkingDirPath(
+  nodeTreeEntry: NodeTreeEntry,
+): string | undefined {
+  const treeConfig = nodeTreeEntry.workspaceModel.treeConfig;
+
+  if (treeConfig.defaults?.cwd !== undefined) {
+    return nodeTreeEntry.treeNode.cwd;
+  }
+
+  const treeNodeConfigPath = getTreeNodeConfigPath(
+    treeConfig.tree,
+    nodeTreeEntry.treeNode.id,
+  );
+
+  if (
+    treeNodeConfigPath?.some(
+      (treeNodeConfig) => treeNodeConfig.cwd !== undefined,
+    )
+  ) {
+    return nodeTreeEntry.treeNode.cwd;
+  }
+
+  return undefined;
+}
+
+function getTreeNodeConfigPath(
+  treeNodeConfigs: readonly TreeNodeConfig[],
+  nodeId: string,
+): TreeNodeConfig[] | undefined {
+  for (const treeNodeConfig of treeNodeConfigs) {
+    if (treeNodeConfig.id === nodeId) return [treeNodeConfig];
+    if (treeNodeConfig.kind !== "group") continue;
+
+    const childTreeNodeConfigPath = getTreeNodeConfigPath(
+      treeNodeConfig.children,
+      nodeId,
+    );
+
+    if (childTreeNodeConfigPath) {
+      return [treeNodeConfig, ...childTreeNodeConfigPath];
+    }
+  }
+
+  return undefined;
 }
 
 function formatDisplayPath(dirPath: string): string {
