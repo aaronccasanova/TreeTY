@@ -59,7 +59,7 @@ interface TreeConfigCommandContext {
   treeConfigFilePath: string;
 }
 
-const cliVersion = "0.0.2";
+const cliVersion = "0.0.3";
 
 const optionNameByAlias = new Map([
   ["-c", "--config"],

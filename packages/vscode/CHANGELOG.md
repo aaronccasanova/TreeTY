@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-08-07
+
 - Reconcile changed trees in place while preserving matching live terminal sessions.
 - Add a searchable tree editor with inline placement controls, expanded-by-default navigation, and expand-all or collapse-all actions for moving terminals and groups.
 - Remove redundant Open Terminal and Refresh buttons from the tree view.

@@ -229,19 +229,19 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-The core library and CLI are versioned independently from the VS Code extension. The current package versions are `@treety/core@0.0.2`, `@treety/cli@0.0.2`, and `TreeTY.treety@0.1.1`. Create the stable local VSIX path with:
+The core library and CLI are versioned independently from the VS Code extension. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, and `TreeTY.treety@0.1.2`. The private Pi integration starts at `0.0.0` and ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
 
 ```sh
 pnpm package
 ```
 
-This writes `artifacts/treety-0.1.1.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+This writes `artifacts/treety-0.1.2.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-0.1.1-snapshot.20260804T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+For example, this can create `artifacts/treety-0.1.2-snapshot.20260807T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
 
 Build and force-install a fresh snapshot in one step with:
 
