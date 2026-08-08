@@ -1,6 +1,6 @@
 ---
 name: treety
-description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, rename, move, annotate, or remove TreeTY groups and terminal leaves; coordinate independent terminal or agent sessions through @treety/cli; work with local .treety/tree.json or global TreeTY configuration; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
+description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, order, annotate, signal attention for, or remove TreeTY groups and terminal leaves; coordinate independent terminal sessions through @treety/cli; link Pi sessions with /treety-setup; work with tree.json and local state.json; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
 ---
 
 # TreeTY
@@ -19,7 +19,7 @@ Read only the references needed for the current task.
 
 1. Select a stable CLI runner using the guidance in `references/cli.md`.
 2. Resolve the exact configuration path before making changes. Inside a TreeTY terminal, inspect `treety current` first.
-3. Inspect the current tree and use opaque node IDs for parent, move, rename, configure, metadata, and remove operations.
+3. Inspect the current tree and use opaque node IDs for parent, order, rename, configure, metadata, attention, and remove operations.
 4. Apply the smallest requested mutation through the CLI. Do not edit JSON manually when the CLI supports the operation.
 5. List the resulting tree and confirm the intended scope, hierarchy, working directories, project directories, metadata, and restart policies.
 6. Explain whether the result creates only a persistent terminal definition or also starts a VS Code terminal.
@@ -30,7 +30,7 @@ Treat `remove --yes` and `init --force` as destructive. Confirm the resolved con
 
 - Use the CLI to manage local, global, or explicitly selected configuration files.
 - Use VS Code to create, reveal, restart, stop, and track native terminal sessions.
-- Use the core package for parsing, inheritance, immutable tree operations, lifecycle orchestration, and host contracts.
+- Use the core package for parsing, inheritance, transactional storage, immutable tree operations, local attention state, lifecycle orchestration, and host contracts.
 - Do not claim that the current CLI can attach to, reveal, stop, or restart a live terminal. It manages terminal definitions only.
 - Do not invent an external terminal emulator integration. The current adapter launches native VS Code integrated terminals.
 

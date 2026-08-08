@@ -2,7 +2,7 @@
   "name": "treety",
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "TreeTY",
   "preview": true,
   "icon": "media/treety.png",
@@ -51,72 +51,92 @@
     "commands": [
       {
         "command": "treety.refresh",
-        "title": "TreeTY: Refresh",
+        "title": "Refresh",
+        "category": "TreeTY",
         "icon": "$(refresh)"
       },
       {
         "command": "treety.initializeWorkspace",
-        "title": "TreeTY: Initialize Workspace",
+        "title": "Initialize Workspace",
+        "category": "TreeTY",
         "icon": "$(new-folder)"
       },
       {
         "command": "treety.initializeGlobalTree",
-        "title": "TreeTY: Initialize Global Tree",
+        "title": "Initialize Global Tree",
+        "category": "TreeTY",
         "icon": "$(globe)"
       },
       {
         "command": "treety.openConfig",
-        "title": "TreeTY: Open Configuration",
+        "title": "Open Configuration",
+        "category": "TreeTY",
         "icon": "$(json)"
       },
       {
         "command": "treety.createGroup",
-        "title": "TreeTY: Create Group",
+        "title": "Create Group",
+        "category": "TreeTY",
         "icon": "$(new-folder)"
       },
       {
         "command": "treety.createTerminal",
-        "title": "TreeTY: Create Terminal",
+        "title": "Create Terminal",
+        "category": "TreeTY",
         "icon": "$(add)"
       },
       {
         "command": "treety.renameNode",
-        "title": "TreeTY: Rename",
+        "title": "Rename",
+        "category": "TreeTY",
         "icon": "$(edit)"
       },
       {
         "command": "treety.configureNode",
-        "title": "TreeTY: Configure Node...",
+        "title": "Configure",
+        "category": "TreeTY",
         "icon": "$(settings-gear)"
       },
       {
         "command": "treety.moveNode",
-        "title": "TreeTY: Move",
+        "title": "Move",
+        "category": "TreeTY",
         "icon": "$(type-hierarchy-sub)"
       },
       {
+        "command": "treety.showNodeActions",
+        "title": "Actions",
+        "category": "TreeTY",
+        "icon": "$(gear)"
+      },
+      {
         "command": "treety.deleteNode",
-        "title": "TreeTY: Delete",
+        "title": "Delete",
+        "category": "TreeTY",
         "icon": "$(trash)"
       },
       {
         "command": "treety.openTerminal",
-        "title": "TreeTY: Open Terminal",
+        "title": "Open Terminal",
+        "category": "TreeTY",
         "icon": "$(terminal)"
       },
       {
         "command": "treety.restartTerminal",
-        "title": "TreeTY: Restart Terminal",
+        "title": "Restart Terminal",
+        "category": "TreeTY",
         "icon": "$(debug-restart)"
       },
       {
         "command": "treety.stopTerminal",
-        "title": "TreeTY: Stop Terminal",
+        "title": "Stop Terminal",
+        "category": "TreeTY",
         "icon": "$(debug-stop)"
       },
       {
         "command": "treety.addTerminalDirectoryToWorkspace",
-        "title": "TreeTY: Add Project Directory to VS Code Workspace...",
+        "title": "Add Project Directory to VS Code Workspace...",
+        "category": "TreeTY",
         "icon": "$(folder-library)"
       }
     ],
@@ -210,11 +230,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "treety.refresh",
-          "when": "view == treety.terminals",
-          "group": "navigation@8"
-        },
-        {
           "command": "treety.openConfig",
           "when": "view == treety.terminals",
           "group": "navigation@9"
@@ -222,24 +237,14 @@
       ],
       "view/item/context": [
         {
-          "command": "treety.openTerminal",
+          "command": "treety.deleteNode",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "inline@1"
         },
         {
-          "command": "treety.restartTerminal",
+          "command": "treety.showNodeActions",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "inline@2"
-        },
-        {
-          "command": "treety.stopTerminal",
-          "when": "view == treety.terminals && (viewItem == treetyTerminal.idle || viewItem == treetyTerminal.running || viewItem == treetyTerminal.starting)",
-          "group": "inline@3"
-        },
-        {
-          "command": "treety.deleteNode",
-          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
-          "group": "inline@4"
         },
         {
           "command": "treety.openConfig",
@@ -272,6 +277,11 @@
           "group": "inline@3"
         },
         {
+          "command": "treety.showNodeActions",
+          "when": "view == treety.terminals && viewItem == treetyGroup",
+          "group": "inline@4"
+        },
+        {
           "command": "treety.createGroup",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyWorkspace\\.configured/)",
           "group": "navigation@2"
@@ -295,6 +305,16 @@
           "command": "treety.moveNode",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
           "group": "modification@3"
+        },
+        {
+          "command": "treety.restartTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "session@1"
+        },
+        {
+          "command": "treety.stopTerminal",
+          "when": "view == treety.terminals && (viewItem == treetyTerminal.idle || viewItem == treetyTerminal.running || viewItem == treetyTerminal.starting)",
+          "group": "session@2"
         },
         {
           "command": "treety.deleteNode",
@@ -330,6 +350,10 @@
         },
         {
           "command": "treety.moveNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.showNodeActions",
           "when": "false"
         },
         {

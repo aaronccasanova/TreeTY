@@ -14,14 +14,14 @@ import {
 } from "./terminal-host";
 
 export class TreeTYEngine implements Disposable {
-  private readonly terminalNodeById: Map<string, ResolvedTreeTerminal>;
+  private terminalNodeById: Map<string, ResolvedTreeTerminal>;
 
   private readonly terminalSessionStore = new TerminalSessionStore();
 
   private terminalHostSubscription: Disposable | undefined;
 
   public constructor(
-    public readonly resolvedTreeConfig: ResolvedTreeConfig,
+    public resolvedTreeConfig: ResolvedTreeConfig,
     private readonly terminalHost: TerminalHost,
   ) {
     this.terminalNodeById = getTerminalNodeById(resolvedTreeConfig.tree);
@@ -74,6 +74,45 @@ export class TreeTYEngine implements Disposable {
     }
 
     await this.createTerminalSession(terminalNode, true);
+  }
+
+  public async reconcile(
+    resolvedTreeConfig: ResolvedTreeConfig,
+  ): Promise<void> {
+    const nextTerminalNodeById = getTerminalNodeById(resolvedTreeConfig.tree);
+
+    for (const previousTerminalNodeId of this.terminalNodeById.keys()) {
+      if (nextTerminalNodeById.has(previousTerminalNodeId)) continue;
+
+      const terminalSessionState =
+        this.terminalSessionStore.getTerminalSessionState(previousTerminalNodeId);
+
+      if (terminalSessionState.hostSessionId) {
+        this.terminalHost.closeSession(terminalSessionState.hostSessionId);
+      }
+
+      this.terminalSessionStore.deleteTerminalSessionState(
+        previousTerminalNodeId,
+      );
+    }
+
+    this.resolvedTreeConfig = resolvedTreeConfig;
+    this.terminalNodeById = nextTerminalNodeById;
+
+    for (const terminalNode of nextTerminalNodeById.values()) {
+      if (terminalNode.restartPolicy !== "onOpen") continue;
+
+      const terminalSessionState =
+        this.terminalSessionStore.getTerminalSessionState(terminalNode.id);
+
+      if (terminalSessionState.hostSessionId) continue;
+
+      try {
+        await this.createTerminalSession(terminalNode, false);
+      } catch {
+        continue;
+      }
+    }
   }
 
   public async restartTerminal(nodeId: string): Promise<void> {

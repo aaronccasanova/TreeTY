@@ -5,20 +5,26 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
-  formatTreeConfigContent,
+  getTreeStateFilePath,
   getTreeNode,
   JsonValue,
+  loadTreeStateFile,
+  MoveTreeNodeOptions,
   moveTreeNode,
+  mutateTreeConfigFile,
   parseTreeConfigContent,
   removeTreeNode,
   renameTreeNode,
   resolveTreeConfig,
   ResolvedTreeNode,
+  setTreeNodeAttention,
   TerminalSessionState,
   TreeConfig,
   TreeNodeConfig,
   TreeTYEngine,
+  UpdateTreeNodeOptions,
   updateTreeNode,
+  writeTreeConfigFile,
 } from "@treety/core";
 import * as vscode from "vscode";
 
@@ -37,11 +43,31 @@ interface WorkspaceModelLocation {
   workspaceDirUri: vscode.Uri;
   workspaceFolder?: vscode.WorkspaceFolder;
   configFileUri: vscode.Uri;
+  stateFileUri: vscode.Uri;
   configSource: TreeConfigSource;
 }
 
-interface MoveDestinationQuickPickItem extends vscode.QuickPickItem {
-  parentId?: string;
+type MoveAction = "after" | "before" | "inside";
+
+interface MoveTreeQuickPickButton extends vscode.QuickInputButton {
+  action: MoveAction;
+}
+
+interface MoveTreeQuickPickItem extends vscode.QuickPickItem {
+  buttons?: readonly MoveTreeQuickPickButton[];
+  containerId?: string;
+  isContainer: boolean;
+  treeNode?: ResolvedTreeNode;
+}
+
+interface MoveTreeEditorState {
+  collapsedGroupIds: ReadonlySet<string>;
+  isRootCollapsed: boolean;
+  showAllGroups: boolean;
+}
+
+interface NodeActionQuickPickItem extends vscode.QuickPickItem {
+  execute: () => Promise<void>;
 }
 
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
@@ -49,11 +75,16 @@ type GlobalTreeVisibility = "always" | "fallback" | "never";
 
 const configDirName = ".treety";
 const configFileName = "tree.json";
+const stateFileName = "state.json";
 
 export class TreeTYController implements WorkspaceModelSource, vscode.Disposable {
   private readonly workspaceModelChangeEmitter = new vscode.EventEmitter<void>();
 
   private readonly globalConfigFileUri = getGlobalConfigFileUri();
+
+  private readonly globalStateFileUri = vscode.Uri.file(
+    getTreeStateFilePath(this.globalConfigFileUri.fsPath),
+  );
 
   private readonly vscodeDisposables: vscode.Disposable[];
 
@@ -74,12 +105,25 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         configFileName,
       ),
     );
+    const workspaceStateFileWatcher = vscode.workspace.createFileSystemWatcher(
+      `**/${configDirName}/${stateFileName}`,
+    );
+    const globalStateFileWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        getParentUri(this.globalStateFileUri),
+        stateFileName,
+      ),
+    );
 
     this.vscodeDisposables = [
       workspaceConfigFileWatcher,
       globalConfigFileWatcher,
+      workspaceStateFileWatcher,
+      globalStateFileWatcher,
       ...this.getConfigFileWatcherSubscriptions(workspaceConfigFileWatcher),
       ...this.getConfigFileWatcherSubscriptions(globalConfigFileWatcher),
+      ...this.getStateFileWatcherSubscriptions(workspaceStateFileWatcher),
+      ...this.getStateFileWatcherSubscriptions(globalStateFileWatcher),
       vscode.workspace.onDidChangeWorkspaceFolders(() =>
         this.scheduleWorkspaceReload(),
       ),
@@ -169,12 +213,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (!groupName) return;
 
     const parentId = getTargetParentId(treeEntry);
-    const treeConfig = addTreeGroup(workspaceModel.treeConfig, {
-      name: groupName,
-      parentId,
-    });
-
-    await this.writeWorkspaceTreeConfig(workspaceModel, treeConfig);
+    await this.writeWorkspaceTreeConfig(workspaceModel, (treeConfig) =>
+      addTreeGroup(treeConfig, {
+        name: groupName,
+        parentId,
+      }),
+    );
   }
 
   public async createTerminal(treeEntry?: TreeEntry): Promise<void> {
@@ -191,12 +235,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (!terminalName) return;
 
     const parentId = getTargetParentId(treeEntry);
-    const treeConfig = addTreeTerminal(workspaceModel.treeConfig, {
-      name: terminalName,
-      parentId,
-    });
-
-    await this.writeWorkspaceTreeConfig(workspaceModel, treeConfig);
+    await this.writeWorkspaceTreeConfig(workspaceModel, (treeConfig) =>
+      addTreeTerminal(treeConfig, {
+        name: terminalName,
+        parentId,
+      }),
+    );
   }
 
   public async renameNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -208,15 +252,14 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!treeNodeName) return;
 
-    const treeConfig = renameTreeNode(
-      nodeTreeEntry.workspaceModel.treeConfig,
-      nodeTreeEntry.treeNode.id,
-      treeNodeName.trim(),
-    );
-
     await this.writeWorkspaceTreeConfig(
       nodeTreeEntry.workspaceModel,
-      treeConfig,
+      (treeConfig) =>
+        renameTreeNode(
+          treeConfig,
+          nodeTreeEntry.treeNode.id,
+          treeNodeName.trim(),
+        ),
     );
   }
 
@@ -273,52 +316,110 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (!configurationItem) return;
 
-    const treeConfig = await this.getConfiguredTreeNodeUpdate(
-      nodeTreeEntry,
+    const treeNodeUpdate = await this.getConfiguredTreeNodeUpdate(
       treeNodeConfig,
       configurationItem.propertyName,
     );
 
-    if (!treeConfig) return;
+    if (!treeNodeUpdate) return;
 
     await this.writeWorkspaceTreeConfig(
       nodeTreeEntry.workspaceModel,
-      treeConfig,
+      (treeConfig) =>
+        updateTreeNode(treeConfig, {
+          nodeId: treeNodeConfig.id,
+          ...treeNodeUpdate,
+        }),
     );
   }
 
   public async moveNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    const moveDestinationQuickPickItems = getMoveDestinationQuickPickItems(
-      nodeTreeEntry,
-    );
+    const moveTreeNodeOptions = await showMoveTreeEditor(nodeTreeEntry);
 
-    if (moveDestinationQuickPickItems.length === 0) {
-      void vscode.window.showInformationMessage(
-        `There is no valid destination for "${nodeTreeEntry.treeNode.name}".`,
-      );
-
-      return;
-    }
-
-    const moveDestinationQuickPickItem = await vscode.window.showQuickPick(
-      moveDestinationQuickPickItems,
-      {
-        placeHolder: `Move "${nodeTreeEntry.treeNode.name}" to...`,
-        matchOnDescription: true,
-      },
-    );
-
-    if (!moveDestinationQuickPickItem) return;
-
-    const treeConfig = moveTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
-      nodeId: nodeTreeEntry.treeNode.id,
-      parentId: moveDestinationQuickPickItem.parentId,
-    });
+    if (!moveTreeNodeOptions) return;
 
     await this.writeWorkspaceTreeConfig(
       nodeTreeEntry.workspaceModel,
-      treeConfig,
+      (treeConfig) => moveTreeNode(treeConfig, moveTreeNodeOptions),
     );
+  }
+
+  public async showNodeActions(nodeTreeEntry: NodeTreeEntry): Promise<void> {
+    const nodeActionQuickPickItems: NodeActionQuickPickItem[] = [];
+
+    if (nodeTreeEntry.treeNode.kind === "group") {
+      nodeActionQuickPickItems.push(
+        {
+          execute: () => this.createTerminal(nodeTreeEntry),
+          label: "$(add) Create terminal",
+        },
+        {
+          execute: () => this.createGroup(nodeTreeEntry),
+          label: "$(new-folder) Create group",
+        },
+      );
+    }
+
+    nodeActionQuickPickItems.push(
+      {
+        execute: () => this.renameNode(nodeTreeEntry),
+        label: "$(edit) Rename",
+      },
+      {
+        execute: () => this.configureNode(nodeTreeEntry),
+        label: "$(settings-gear) Configure",
+      },
+      {
+        execute: () => this.moveNode(nodeTreeEntry),
+        label: "$(type-hierarchy-sub) Move",
+      },
+    );
+
+    if (nodeTreeEntry.treeNode.kind === "terminal") {
+      const terminalSessionState = this.getTerminalSessionState(
+        nodeTreeEntry.workspaceModel,
+        nodeTreeEntry.treeNode.id,
+      );
+
+      nodeActionQuickPickItems.push({
+        execute: () => this.restartTerminal(nodeTreeEntry),
+        label: "$(debug-restart) Restart terminal",
+      });
+
+      if (
+        terminalSessionState.status === "idle" ||
+        terminalSessionState.status === "running" ||
+        terminalSessionState.status === "starting"
+      ) {
+        nodeActionQuickPickItems.push({
+          execute: () => this.stopTerminal(nodeTreeEntry),
+          label: "$(debug-stop) Stop terminal",
+        });
+      }
+
+      if (nodeTreeEntry.treeNode.projectDir) {
+        nodeActionQuickPickItems.push({
+          execute: () =>
+            this.addTerminalDirectoryToWorkspace(nodeTreeEntry),
+          label: "$(folder-library) Add project directory to workspace",
+        });
+      }
+    }
+
+    nodeActionQuickPickItems.push({
+      execute: () => this.deleteNode(nodeTreeEntry),
+      label: "$(trash) Delete",
+    });
+
+    const nodeActionQuickPickItem = await vscode.window.showQuickPick(
+      nodeActionQuickPickItems,
+      {
+        title: nodeTreeEntry.treeNode.name,
+        placeHolder: "Choose an action",
+      },
+    );
+
+    await nodeActionQuickPickItem?.execute();
   }
 
   public async deleteNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -349,20 +450,16 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       nodeTreeEntry.workspaceModel.treeTYEngine.stopTerminal(terminalNodeId);
     }
 
-    const treeConfig = removeTreeNode(
-      nodeTreeEntry.workspaceModel.treeConfig,
-      nodeTreeEntry.treeNode.id,
-    );
-
     await this.writeWorkspaceTreeConfig(
       nodeTreeEntry.workspaceModel,
-      treeConfig,
+      (treeConfig) => removeTreeNode(treeConfig, nodeTreeEntry.treeNode.id),
     );
   }
 
   public async openTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
+    await this.clearTerminalAttention(nodeTreeEntry);
     await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
       nodeTreeEntry.treeNode.id,
     );
@@ -372,6 +469,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
+    await this.clearTerminalAttention(nodeTreeEntry);
     await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
       nodeTreeEntry.treeNode.id,
     );
@@ -426,9 +524,31 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     configFileWatcher: vscode.FileSystemWatcher,
   ): vscode.Disposable[] {
     return [
-      configFileWatcher.onDidCreate(() => this.scheduleWorkspaceReload()),
-      configFileWatcher.onDidChange(() => this.scheduleWorkspaceReload()),
-      configFileWatcher.onDidDelete(() => this.scheduleWorkspaceReload()),
+      configFileWatcher.onDidCreate((configFileUri) =>
+        this.scheduleWorkspaceReconciliation(configFileUri, "config"),
+      ),
+      configFileWatcher.onDidChange((configFileUri) =>
+        this.scheduleWorkspaceReconciliation(configFileUri, "config"),
+      ),
+      configFileWatcher.onDidDelete((configFileUri) =>
+        this.scheduleWorkspaceReconciliation(configFileUri, "config"),
+      ),
+    ];
+  }
+
+  private getStateFileWatcherSubscriptions(
+    stateFileWatcher: vscode.FileSystemWatcher,
+  ): vscode.Disposable[] {
+    return [
+      stateFileWatcher.onDidCreate((stateFileUri) =>
+        this.scheduleWorkspaceReconciliation(stateFileUri, "state"),
+      ),
+      stateFileWatcher.onDidChange((stateFileUri) =>
+        this.scheduleWorkspaceReconciliation(stateFileUri, "state"),
+      ),
+      stateFileWatcher.onDidDelete((stateFileUri) =>
+        this.scheduleWorkspaceReconciliation(stateFileUri, "state"),
+      ),
     ];
   }
 
@@ -438,14 +558,125 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
+  private scheduleWorkspaceReconciliation(
+    changedFileUri: vscode.Uri,
+    changedFileKind: "config" | "state",
+  ): void {
+    void this.queueWorkspaceOperation(() =>
+      this.reconcileWorkspace(changedFileUri, changedFileKind),
+    ).catch((error: unknown) => showCommandError(error));
+  }
+
   private queueWorkspaceReload(): Promise<void> {
-    const workspaceReloadPromise = this.workspaceReloadPromise.then(() =>
-      this.reloadWorkspaces(),
+    return this.queueWorkspaceOperation(() => this.reloadWorkspaces());
+  }
+
+  private queueWorkspaceOperation(
+    workspaceOperation: () => Promise<void>,
+  ): Promise<void> {
+    const workspaceReloadPromise = this.workspaceReloadPromise.then(
+      workspaceOperation,
     );
 
     this.workspaceReloadPromise = workspaceReloadPromise.catch(() => undefined);
 
     return workspaceReloadPromise;
+  }
+
+  private async reconcileWorkspace(
+    changedFileUri: vscode.Uri,
+    changedFileKind: "config" | "state",
+  ): Promise<void> {
+    const workspaceModel = this.workspaceModels.find((candidateWorkspaceModel) => {
+      const targetFileUri =
+        changedFileKind === "config"
+          ? candidateWorkspaceModel.configFileUri
+          : candidateWorkspaceModel.stateFileUri;
+
+      return targetFileUri.toString() === changedFileUri.toString();
+    });
+
+    if (!workspaceModel) {
+      await this.reloadWorkspaces();
+
+      return;
+    }
+
+    if (
+      workspaceModel.kind !== "configured" ||
+      (changedFileKind === "config" &&
+        !(await getFileExists(workspaceModel.configFileUri)))
+    ) {
+      await this.reloadWorkspaceModel(workspaceModel);
+
+      return;
+    }
+
+    const treeConfig =
+      changedFileKind === "config"
+        ? parseTreeConfigContent(
+            new TextDecoder().decode(
+              await vscode.workspace.fs.readFile(workspaceModel.configFileUri),
+            ),
+          )
+        : workspaceModel.treeConfig;
+    const treeState = await loadTreeStateFile(
+      workspaceModel.configFileUri.fsPath,
+    );
+    const resolvedTreeConfig = resolveTreeConfig(
+      treeConfig,
+      workspaceModel.workspaceDirUri.fsPath,
+      treeState,
+    );
+
+    if (changedFileKind === "config") {
+      await workspaceModel.treeTYEngine.reconcile(resolvedTreeConfig);
+    }
+
+    workspaceModel.treeConfig = treeConfig;
+    workspaceModel.treeState = treeState;
+    workspaceModel.resolvedTreeConfig = resolvedTreeConfig;
+
+    this.workspaceModelChangeEmitter.fire();
+  }
+
+  private async reloadWorkspaceModel(
+    previousWorkspaceModel: WorkspaceModel,
+  ): Promise<void> {
+    const workspaceModelIndex = this.workspaceModels.findIndex(
+      (workspaceModel) => workspaceModel.id === previousWorkspaceModel.id,
+    );
+
+    if (workspaceModelIndex === -1) {
+      await this.reloadWorkspaces();
+
+      return;
+    }
+
+    const nextWorkspaceModel = await this.loadWorkspaceModel({
+      id: previousWorkspaceModel.id,
+      name: previousWorkspaceModel.name,
+      workspaceDirUri: previousWorkspaceModel.workspaceDirUri,
+      workspaceFolder: previousWorkspaceModel.workspaceFolder,
+      configFileUri: previousWorkspaceModel.configFileUri,
+      stateFileUri: previousWorkspaceModel.stateFileUri,
+      configSource: previousWorkspaceModel.configSource,
+    });
+
+    if (previousWorkspaceModel.kind === "configured") {
+      if (nextWorkspaceModel.kind !== "configured") {
+        for (const treeNode of previousWorkspaceModel.resolvedTreeConfig.tree) {
+          for (const terminalNodeId of getTerminalNodeIds(treeNode)) {
+            previousWorkspaceModel.treeTYEngine.stopTerminal(terminalNodeId);
+          }
+        }
+      }
+
+      previousWorkspaceModel.treeTYEngine.dispose();
+    }
+
+    this.workspaceModels[workspaceModelIndex] = nextWorkspaceModel;
+    this.workspaceModelChangeEmitter.fire();
   }
 
   private async reloadWorkspaces(): Promise<void> {
@@ -507,9 +738,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     try {
       const treeConfigFileContent = new TextDecoder().decode(configFileContent);
       const treeConfig = parseTreeConfigContent(treeConfigFileContent);
+      const treeState = await loadTreeStateFile(
+        workspaceModelLocation.configFileUri.fsPath,
+      );
       const resolvedTreeConfig = resolveTreeConfig(
         treeConfig,
         workspaceModelLocation.workspaceDirUri.fsPath,
+        treeState,
       );
       const vscodeTerminalHost = new VscodeTerminalHost(
         workspaceModelLocation.id,
@@ -528,6 +763,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         kind: "configured",
         ...workspaceModelLocation,
         treeConfig,
+        treeState,
         resolvedTreeConfig,
         treeTYEngine,
       };
@@ -594,12 +830,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       return;
     }
 
-    await vscode.workspace.fs.createDirectory(
-      getParentUri(workspaceModel.configFileUri),
-    );
-    await vscode.workspace.fs.writeFile(
-      workspaceModel.configFileUri,
-      new TextEncoder().encode(getStarterConfigFileContent()),
+    await writeTreeConfigFile(
+      workspaceModel.configFileUri.fsPath,
+      getStarterTreeConfig(),
     );
     await this.queueWorkspaceReload();
     await this.showConfigFile(workspaceModel.configFileUri);
@@ -607,23 +840,31 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
   private async writeWorkspaceTreeConfig(
     workspaceModel: ConfiguredWorkspaceModel,
-    treeConfig: TreeConfig,
+    mutateTreeConfig: (treeConfig: TreeConfig) => TreeConfig,
   ): Promise<void> {
-    const temporaryConfigFileUri = vscode.Uri.joinPath(
-      getParentUri(workspaceModel.configFileUri),
-      `.tree-${process.pid}-${Date.now()}.json`,
+    await mutateTreeConfigFile(
+      workspaceModel.configFileUri.fsPath,
+      mutateTreeConfig,
     );
+    await this.queueWorkspaceOperation(() =>
+      this.reconcileWorkspace(workspaceModel.configFileUri, "config"),
+    );
+  }
 
-    await vscode.workspace.fs.writeFile(
-      temporaryConfigFileUri,
-      new TextEncoder().encode(formatTreeConfigContent(treeConfig)),
+  private async clearTerminalAttention(
+    nodeTreeEntry: NodeTreeEntry,
+  ): Promise<void> {
+    await setTreeNodeAttention(
+      nodeTreeEntry.workspaceModel.configFileUri.fsPath,
+      nodeTreeEntry.treeNode.id,
+      false,
     );
-    await vscode.workspace.fs.rename(
-      temporaryConfigFileUri,
-      workspaceModel.configFileUri,
-      { overwrite: true },
+    await this.queueWorkspaceOperation(() =>
+      this.reconcileWorkspace(
+        nodeTreeEntry.workspaceModel.stateFileUri,
+        "state",
+      ),
     );
-    await this.queueWorkspaceReload();
   }
 
   private async syncProjectDirectory(
@@ -698,10 +939,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   }
 
   private async getConfiguredTreeNodeUpdate(
-    nodeTreeEntry: NodeTreeEntry,
     treeNodeConfig: TreeNodeConfig,
     propertyName: "cwd" | "env" | "metadata" | "projectDir" | "restartPolicy",
-  ): Promise<TreeConfig | undefined> {
+  ): Promise<Omit<UpdateTreeNodeOptions, "nodeId"> | undefined> {
     if (propertyName === "restartPolicy") {
       const restartPolicyItem = await vscode.window.showQuickPick(
         [
@@ -716,10 +956,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
       if (!restartPolicyItem) return undefined;
 
-      return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
-        nodeId: treeNodeConfig.id,
+      return {
         restartPolicy: restartPolicyItem.restartPolicy,
-      });
+      };
     }
 
     if (propertyName === "env" || propertyName === "metadata") {
@@ -742,15 +981,14 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       if (jsonContent === undefined) return undefined;
 
       if (propertyName === "metadata") {
-        return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
-          nodeId: treeNodeConfig.id,
+        return {
           metadata:
             jsonContent.trim() === ""
               ? undefined
               : (JSON.parse(jsonContent) as JsonValue),
           metadataAction:
             jsonContent.trim() === "" ? "remove" : "replace",
-        });
+        };
       }
 
       const environmentNames = Object.keys(treeNodeConfig.env ?? {});
@@ -759,13 +997,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
           ? undefined
           : (JSON.parse(jsonContent) as Record<string, string | null>);
 
-      return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
-        nodeId: treeNodeConfig.id,
+      return {
         env: {
           delete: environmentNames,
           set: terminalEnvironment,
         },
-      });
+      };
     }
 
     const currentDirName = treeNodeConfig[propertyName];
@@ -780,10 +1017,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
     if (dirName === undefined) return undefined;
 
-    return updateTreeNode(nodeTreeEntry.workspaceModel.treeConfig, {
-      nodeId: treeNodeConfig.id,
+    return {
       [propertyName]: dirName.trim() || null,
-    });
+    };
   }
 
   private async showConfigFile(configFileUri: vscode.Uri): Promise<void> {
@@ -843,6 +1079,11 @@ function getWorkspaceModelLocation(
     configDirName,
     configFileName,
   );
+  const stateFileUri = vscode.Uri.joinPath(
+    workspaceFolder.uri,
+    configDirName,
+    stateFileName,
+  );
 
   return {
     id: `workspace:${configFileUri.toString()}`,
@@ -850,6 +1091,7 @@ function getWorkspaceModelLocation(
     workspaceDirUri: workspaceFolder.uri,
     workspaceFolder,
     configFileUri,
+    stateFileUri,
     configSource: "workspace",
   };
 }
@@ -862,6 +1104,9 @@ function getGlobalWorkspaceModelLocation(
     name: "Global",
     workspaceDirUri: vscode.Uri.file(os.homedir()),
     configFileUri: globalConfigFileUri,
+    stateFileUri: vscode.Uri.file(
+      getTreeStateFilePath(globalConfigFileUri.fsPath),
+    ),
     configSource: "global",
   };
 }
@@ -914,65 +1159,269 @@ function getTargetDescription(
   return `"${treeEntry.treeNode.name}"`;
 }
 
-function getMoveDestinationQuickPickItems(
+async function showMoveTreeEditor(
   nodeTreeEntry: NodeTreeEntry,
-): MoveDestinationQuickPickItem[] {
-  const moveDestinationQuickPickItems: MoveDestinationQuickPickItem[] = [];
+): Promise<MoveTreeNodeOptions | undefined> {
+  const moveTreeQuickPick =
+    vscode.window.createQuickPick<MoveTreeQuickPickItem>();
+  const groupIds = getGroupIds(
+    nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
+  );
+  const collapsedGroupIds = new Set<string>();
+  const expandEntireTreeButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon("expand-all"),
+    tooltip: "Expand entire tree",
+  };
+  const collapseEntireTreeButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon("collapse-all"),
+    tooltip: "Collapse entire tree",
+  };
+  let isRootCollapsed = false;
+  let isResolved = false;
 
-  if (nodeTreeEntry.treeNode.parentId !== undefined) {
-    moveDestinationQuickPickItems.push({
-      label: "$(root-folder) Root",
-      description: nodeTreeEntry.workspaceModel.name,
+  const refreshMoveTreeQuickPickItems = (): void => {
+    moveTreeQuickPick.items = getMoveTreeQuickPickItems(nodeTreeEntry, {
+      collapsedGroupIds,
+      isRootCollapsed,
+      showAllGroups: moveTreeQuickPick.value.trim() !== "",
     });
+  };
+
+  moveTreeQuickPick.title = `Move ${nodeTreeEntry.treeNode.name}`;
+  moveTreeQuickPick.placeholder = "Search the tree";
+  moveTreeQuickPick.prompt =
+    "Use a row's arrows to insert above, inside, or below. Select a group to expand or collapse it.";
+  moveTreeQuickPick.buttons = [
+    expandEntireTreeButton,
+    collapseEntireTreeButton,
+  ];
+  moveTreeQuickPick.matchOnDescription = true;
+
+  refreshMoveTreeQuickPickItems();
+
+  return new Promise((resolve) => {
+    const resolveMoveTreeEditor = (
+      moveTreeNodeOptions?: MoveTreeNodeOptions,
+    ): void => {
+      if (isResolved) return;
+
+      isResolved = true;
+      resolve(moveTreeNodeOptions);
+      moveTreeQuickPick.hide();
+      moveTreeQuickPick.dispose();
+    };
+
+    moveTreeQuickPick.onDidChangeValue(refreshMoveTreeQuickPickItems);
+
+    moveTreeQuickPick.onDidTriggerButton((button) => {
+      if (button === expandEntireTreeButton) {
+        collapsedGroupIds.clear();
+        isRootCollapsed = false;
+      } else if (button === collapseEntireTreeButton) {
+        for (const groupId of groupIds) collapsedGroupIds.add(groupId);
+
+        isRootCollapsed = true;
+      } else {
+        return;
+      }
+
+      moveTreeQuickPick.value = "";
+      refreshMoveTreeQuickPickItems();
+    });
+
+    moveTreeQuickPick.onDidAccept(() => {
+      const selectedMoveTreeQuickPickItem = moveTreeQuickPick.selectedItems[0];
+
+      if (!selectedMoveTreeQuickPickItem?.isContainer) return;
+
+      if (!selectedMoveTreeQuickPickItem.containerId) {
+        isRootCollapsed = !isRootCollapsed;
+      } else if (
+        collapsedGroupIds.has(selectedMoveTreeQuickPickItem.containerId)
+      ) {
+        collapsedGroupIds.delete(selectedMoveTreeQuickPickItem.containerId);
+      } else {
+        collapsedGroupIds.add(selectedMoveTreeQuickPickItem.containerId);
+      }
+
+      refreshMoveTreeQuickPickItems();
+    });
+
+    moveTreeQuickPick.onDidTriggerItemButton((buttonEvent) => {
+      const moveTreeQuickPickButton =
+        buttonEvent.button as MoveTreeQuickPickButton;
+      const targetTreeNode = buttonEvent.item.treeNode;
+      const moveTreeNodeOptions: MoveTreeNodeOptions = {
+        nodeId: nodeTreeEntry.treeNode.id,
+      };
+
+      if (moveTreeQuickPickButton.action === "inside") {
+        moveTreeNodeOptions.parentId = targetTreeNode?.id;
+      } else if (
+        moveTreeQuickPickButton.action === "before" &&
+        targetTreeNode
+      ) {
+        moveTreeNodeOptions.beforeId = targetTreeNode.id;
+      } else if (
+        moveTreeQuickPickButton.action === "after" &&
+        targetTreeNode
+      ) {
+        moveTreeNodeOptions.afterId = targetTreeNode.id;
+      } else {
+        return;
+      }
+
+      resolveMoveTreeEditor(moveTreeNodeOptions);
+    });
+
+    moveTreeQuickPick.onDidHide(() => resolveMoveTreeEditor());
+
+    moveTreeQuickPick.show();
+  });
+}
+
+function getMoveTreeQuickPickItems(
+  nodeTreeEntry: NodeTreeEntry,
+  moveTreeEditorState: MoveTreeEditorState,
+): MoveTreeQuickPickItem[] {
+  const sourceTreeNodeIds = new Set(getTreeNodeIds(nodeTreeEntry.treeNode));
+  const rootName = `${nodeTreeEntry.workspaceModel.name} root`;
+  const rootIsExpanded =
+    moveTreeEditorState.showAllGroups || !moveTreeEditorState.isRootCollapsed;
+  const moveTreeQuickPickItems: MoveTreeQuickPickItem[] = [
+    {
+      buttons: [getMoveTreeQuickPickButton("inside", rootName)],
+      description: "tree root",
+      isContainer: true,
+      label: `$(${rootIsExpanded ? "chevron-down" : "chevron-right"}) $(root-folder) ${rootName}`,
+    },
+  ];
+
+  if (!rootIsExpanded) return moveTreeQuickPickItems;
+
+  appendMoveTreeQuickPickItems(
+    moveTreeQuickPickItems,
+    nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
+    nodeTreeEntry.treeNode.id,
+    sourceTreeNodeIds,
+    moveTreeEditorState,
+    1,
+    rootName,
+  );
+
+  return moveTreeQuickPickItems;
+}
+
+function appendMoveTreeQuickPickItems(
+  moveTreeQuickPickItems: MoveTreeQuickPickItem[],
+  treeNodes: readonly ResolvedTreeNode[],
+  sourceTreeNodeId: string,
+  sourceTreeNodeIds: ReadonlySet<string>,
+  moveTreeEditorState: MoveTreeEditorState,
+  depth: number,
+  parentPath: string,
+): void {
+  for (const treeNode of treeNodes) {
+    const isSourceTreeNode = sourceTreeNodeIds.has(treeNode.id);
+    const isGroupExpanded =
+      treeNode.kind === "group" &&
+      (moveTreeEditorState.showAllGroups ||
+        !moveTreeEditorState.collapsedGroupIds.has(treeNode.id));
+    const moveTreeQuickPickButtons = isSourceTreeNode
+      ? undefined
+      : getMoveTreeQuickPickButtons(treeNode);
+    const moveTreeNodeIndentation = "  ".repeat(
+      depth + (treeNode.kind === "terminal" ? 1 : 0),
+    );
+
+    moveTreeQuickPickItems.push({
+      buttons: moveTreeQuickPickButtons,
+      containerId: treeNode.kind === "group" ? treeNode.id : undefined,
+      description: treeNode.id === sourceTreeNodeId ? "moving" : parentPath,
+      isContainer: treeNode.kind === "group",
+      label: `${moveTreeNodeIndentation}${getMoveTreeNodeLabelIcon(treeNode, isGroupExpanded)} ${treeNode.name}`,
+      treeNode,
+    });
+
+    if (treeNode.kind !== "group" || !isGroupExpanded) continue;
+
+    appendMoveTreeQuickPickItems(
+      moveTreeQuickPickItems,
+      treeNode.children,
+      sourceTreeNodeId,
+      sourceTreeNodeIds,
+      moveTreeEditorState,
+      depth + 1,
+      `${parentPath} / ${treeNode.name}`,
+    );
   }
+}
 
-  const pendingTreeGroups = nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree
-    .filter((treeNode) => treeNode.kind === "group")
-    .map((treeNode) => ({ treeNode, depth: 0 }));
+function getMoveTreeQuickPickButtons(
+  treeNode: ResolvedTreeNode,
+): MoveTreeQuickPickButton[] {
+  const moveTreeQuickPickButtons = [
+    getMoveTreeQuickPickButton("before", treeNode.name),
+    getMoveTreeQuickPickButton("after", treeNode.name),
+  ];
 
-  while (pendingTreeGroups.length > 0) {
-    const pendingTreeGroup = pendingTreeGroups.shift();
-
-    if (!pendingTreeGroup) continue;
-
-    if (
-      pendingTreeGroup.treeNode.id !== nodeTreeEntry.treeNode.id &&
-      !getTreeNodeContainsId(
-        nodeTreeEntry.treeNode,
-        pendingTreeGroup.treeNode.id,
-      ) &&
-      pendingTreeGroup.treeNode.id !== nodeTreeEntry.treeNode.parentId
-    ) {
-      moveDestinationQuickPickItems.push({
-        label: `$(folder) ${pendingTreeGroup.treeNode.name}`,
-        description: `${"  ".repeat(pendingTreeGroup.depth)}${pendingTreeGroup.treeNode.cwd}`,
-        parentId: pendingTreeGroup.treeNode.id,
-      });
-    }
-
-    pendingTreeGroups.unshift(
-      ...pendingTreeGroup.treeNode.children
-        .filter((treeNode) => treeNode.kind === "group")
-        .map((treeNode) => ({
-          treeNode,
-          depth: pendingTreeGroup.depth + 1,
-        })),
+  if (treeNode.kind === "group") {
+    moveTreeQuickPickButtons.push(
+      getMoveTreeQuickPickButton("inside", treeNode.name),
     );
   }
 
-  return moveDestinationQuickPickItems;
+  return moveTreeQuickPickButtons;
 }
 
-function getTreeNodeContainsId(
-  treeNode: ResolvedTreeNode,
-  nodeId: string,
-): boolean {
-  if (treeNode.id === nodeId) return true;
-  if (treeNode.kind !== "group") return false;
+function getMoveTreeQuickPickButton(
+  action: MoveAction,
+  targetName: string,
+): MoveTreeQuickPickButton {
+  const iconNameByAction: Record<MoveAction, string> = {
+    after: "arrow-down",
+    before: "arrow-up",
+    inside: "arrow-right",
+  };
+  const tooltipByAction: Record<MoveAction, string> = {
+    after: `Insert below "${targetName}"`,
+    before: `Insert above "${targetName}"`,
+    inside: `Move inside "${targetName}" (at the end)`,
+  };
 
-  return treeNode.children.some((childTreeNode) =>
-    getTreeNodeContainsId(childTreeNode, nodeId),
-  );
+  return {
+    action,
+    iconPath: new vscode.ThemeIcon(iconNameByAction[action]),
+    tooltip: tooltipByAction[action],
+  };
+}
+
+function getMoveTreeNodeLabelIcon(
+  treeNode: ResolvedTreeNode,
+  isGroupExpanded: boolean,
+): string {
+  if (treeNode.kind === "terminal") return "$(terminal)";
+
+  return `$(${isGroupExpanded ? "chevron-down" : "chevron-right"}) $(folder)`;
+}
+
+function getGroupIds(treeNodes: readonly ResolvedTreeNode[]): string[] {
+  return treeNodes.flatMap((treeNode) => {
+    if (treeNode.kind === "terminal") return [];
+
+    return [treeNode.id, ...getGroupIds(treeNode.children)];
+  });
+}
+
+function getTreeNodeIds(treeNode: ResolvedTreeNode): string[] {
+  if (treeNode.kind === "terminal") return [treeNode.id];
+
+  return [
+    treeNode.id,
+    ...treeNode.children.flatMap((childTreeNode) =>
+      getTreeNodeIds(childTreeNode),
+    ),
+  ];
 }
 
 function getTerminalNodeIds(treeNode: ResolvedTreeNode): string[] {
@@ -1152,7 +1601,7 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function getStarterConfigFileContent(): string {
+function getStarterTreeConfig(): TreeConfig {
   const treeConfigWithGroup = addTreeGroup(createEmptyTreeConfig(), {
     name: "Workspace",
   });
@@ -1162,5 +1611,5 @@ function getStarterConfigFileContent(): string {
     parentId: workspaceGroup?.id,
   });
 
-  return formatTreeConfigContent(treeConfig);
+  return treeConfig;
 }

@@ -11,6 +11,7 @@ import {
   TreeConfig,
   TreeNodeConfig,
   TreeNodeDefaults,
+  TreeState,
 } from "./model";
 
 type UnknownRecord = Record<string, unknown>;
@@ -54,6 +55,7 @@ export function formatTreeConfigContent(treeConfig: TreeConfig): string {
 export function resolveTreeConfig(
   treeConfig: TreeConfig,
   workspaceDirPath: string,
+  treeState?: TreeState,
 ): ResolvedTreeConfig {
   const rootDefaults = resolveNodeDefaults(
     {
@@ -65,7 +67,7 @@ export function resolveTreeConfig(
   );
 
   const tree = treeConfig.tree.map((treeNodeConfig) =>
-    resolveTreeNode(treeNodeConfig, rootDefaults),
+    resolveTreeNode(treeNodeConfig, rootDefaults, treeState),
   );
 
   return {
@@ -324,6 +326,7 @@ function parseRestartPolicy(
 function resolveTreeNode(
   treeNodeConfig: TreeNodeConfig,
   parentDefaults: ResolvedNodeDefaults,
+  treeState?: TreeState,
   parentId?: string,
 ): ResolvedTreeNode {
   const treeNodeDefaults = resolveNodeDefaults(parentDefaults, treeNodeConfig);
@@ -343,6 +346,8 @@ function resolveTreeNode(
     return {
       ...resolvedTreeNodeBase,
       kind: "terminal",
+      needsAttention:
+        treeState?.nodes[treeNodeConfig.id]?.needsAttention ?? false,
       command: treeNodeConfig.command,
     };
   }
@@ -351,7 +356,12 @@ function resolveTreeNode(
     ...resolvedTreeNodeBase,
     kind: "group",
     children: treeNodeConfig.children.map((childNodeConfig) =>
-      resolveTreeNode(childNodeConfig, treeNodeDefaults, treeNodeConfig.id),
+      resolveTreeNode(
+        childNodeConfig,
+        treeNodeDefaults,
+        treeState,
+        treeNodeConfig.id,
+      ),
     ),
   };
 }

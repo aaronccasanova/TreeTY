@@ -10,6 +10,8 @@ import {
   renameTreeNode,
   TreeNodeOperationError,
   updateTreeNode,
+  clearTreeNodeMetadataPath,
+  setTreeNodeMetadataPath,
 } from "./tree-editor";
 
 test.test("adds nested groups and terminals with opaque stable IDs", () => {
@@ -142,5 +144,131 @@ test.test("rejects invalid parents and recursive moves", () => {
     (error: unknown) =>
       error instanceof TreeNodeOperationError &&
       error.message.includes("does not exist"),
+  );
+});
+
+test.test("places nodes before and after siblings across tree levels", () => {
+  const treeConfig = addTreeTerminal(
+    addTreeTerminal(
+      addTreeGroup(
+        addTreeGroup(createEmptyTreeConfig(), { id: "first", name: "First" }),
+        { id: "second", name: "Second" },
+      ),
+      { id: "one", name: "One", parentId: "first" },
+    ),
+    { id: "two", name: "Two", parentId: "second" },
+  );
+  const treeConfigAtRoot = moveTreeNode(treeConfig, {
+    nodeId: "one",
+    beforeId: "first",
+  });
+  const rootNodeIds = treeConfigAtRoot.tree.map((treeNode) => treeNode.id);
+
+  assert.deepEqual(rootNodeIds, ["one", "first", "second"]);
+
+  const treeConfigInSecondGroup = moveTreeNode(treeConfigAtRoot, {
+    nodeId: "one",
+    afterId: "two",
+  });
+  const secondGroup = treeConfigInSecondGroup.tree[1];
+
+  assert.equal(secondGroup?.kind, "group");
+
+  if (!secondGroup || secondGroup.kind !== "group") {
+    assert.fail("Expected the second group.");
+  }
+
+  assert.deepEqual(
+    secondGroup.children.map((treeNode) => treeNode.id),
+    ["two", "one"],
+  );
+
+  assert.throws(
+    () =>
+      moveTreeNode(treeConfigInSecondGroup, {
+        nodeId: "second",
+        beforeId: "one",
+      }),
+    /own descendant/,
+  );
+  assert.throws(
+    () =>
+      moveTreeNode(treeConfigInSecondGroup, {
+        nodeId: "one",
+        afterId: "one",
+      }),
+    /contain itself/,
+  );
+});
+
+test.test("sets commands and updates metadata paths without replacing siblings", () => {
+  const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
+    id: "shell",
+    name: "Shell",
+    metadata: {
+      owner: "platform",
+    },
+  });
+  const treeConfigWithSession = setTreeNodeMetadataPath(
+    treeConfig,
+    "shell",
+    "/integrations/pi/sessionId",
+    "session-123",
+  );
+  const configuredTreeConfig = updateTreeNode(treeConfigWithSession, {
+    nodeId: "shell",
+    command: {
+      executable: "pi",
+      args: ["--session", "session-123"],
+    },
+  });
+  const clearedTreeConfig = clearTreeNodeMetadataPath(
+    configuredTreeConfig,
+    "shell",
+    "/integrations/pi/sessionId",
+  );
+  const clearedCommandTreeConfig = updateTreeNode(clearedTreeConfig, {
+    nodeId: "shell",
+    command: null,
+  });
+
+  assert.deepEqual(configuredTreeConfig.tree[0]?.metadata, {
+    owner: "platform",
+    integrations: {
+      pi: {
+        sessionId: "session-123",
+      },
+    },
+  });
+  assert.deepEqual(
+    configuredTreeConfig.tree[0]?.kind === "terminal"
+      ? configuredTreeConfig.tree[0].command
+      : undefined,
+    {
+      executable: "pi",
+      args: ["--session", "session-123"],
+    },
+  );
+  assert.deepEqual(clearedTreeConfig.tree[0]?.metadata, {
+    owner: "platform",
+    integrations: {
+      pi: {},
+    },
+  });
+  assert.equal(
+    clearedCommandTreeConfig.tree[0]?.kind === "terminal"
+      ? clearedCommandTreeConfig.tree[0].command
+      : undefined,
+    undefined,
+  );
+  assert.throws(
+    () =>
+      setTreeNodeMetadataPath(
+        configuredTreeConfig,
+        "shell",
+        "/owner/id",
+        "platform-id",
+      ),
+    /incompatible value/,
   );
 });

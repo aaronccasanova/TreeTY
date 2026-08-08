@@ -45,7 +45,12 @@ test.test("resolves inherited directories, environments, and policies", () => {
     ]
   }`);
   const workspaceDirPath = path.resolve("/workspace");
-  const resolvedTreeConfig = resolveTreeConfig(treeConfig, workspaceDirPath);
+  const resolvedTreeConfig = resolveTreeConfig(treeConfig, workspaceDirPath, {
+    version: 1,
+    nodes: {
+      api: { needsAttention: true },
+    },
+  });
   const serviceGroup = resolvedTreeConfig.tree[0];
 
   assert.equal(serviceGroup?.kind, "group");
@@ -78,6 +83,7 @@ test.test("resolves inherited directories, environments, and policies", () => {
     executable: "pnpm",
     args: ["dev"],
   });
+  assert.equal(apiTerminal.needsAttention, true);
 });
 
 test.test("rejects duplicate node IDs", () => {

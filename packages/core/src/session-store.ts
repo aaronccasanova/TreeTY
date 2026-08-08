@@ -31,6 +31,10 @@ export class TerminalSessionStore {
     return [...this.terminalSessionStates.values()];
   }
 
+  public deleteTerminalSessionState(nodeId: string): void {
+    this.terminalSessionStates.delete(nodeId);
+  }
+
   public setTerminalSessionState(
     nodeId: string,
     status: TerminalStatus,

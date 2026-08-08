@@ -16,6 +16,7 @@ export async function activate(
     treeTYController,
     treeTYTreeProvider,
     treeTYTreeView,
+    vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
     registerAsyncCommand(
       "treety.initializeWorkspace",
@@ -55,6 +56,11 @@ export async function activate(
     registerAsyncCommand(
       "treety.moveNode",
       (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
+      "treety.showNodeActions",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.showNodeActions(nodeTreeEntry),
     ),
     registerAsyncCommand(
       "treety.deleteNode",

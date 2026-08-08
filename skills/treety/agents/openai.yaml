@@ -1,4 +1,4 @@
 interface:
   display_name: "TreeTY"
-  short_description: "Manage hierarchical terminal workspaces"
-  default_prompt: "Use $treety to create and manage a hierarchical terminal workspace."
+  short_description: "Manage terminal trees, state, and integrations"
+  default_prompt: "Use $treety to create, manage, order, and signal attention for a hierarchical terminal workspace."

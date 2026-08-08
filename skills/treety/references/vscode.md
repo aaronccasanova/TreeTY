@@ -11,8 +11,11 @@ The `TreeTY.treety` extension renders global and workspace configurations in a d
 - Working directories (`cwd`) inherit through groups and seed native terminal processes.
 - Optional project directories (`projectDir`) inherit separately and control VS Code workspace-folder integration.
 - The extension watches both local and global `tree.json` files for creation, changes, and deletion.
+- The extension also watches sibling `state.json` files for durable attention changes.
 
 A successful CLI mutation should therefore update the TreeTY view without reloading the VS Code window. No `code` CLI command is required. If the view remains stale, run `TreeTY: Refresh` from the Command Palette. Reload the window only after the targeted refresh fails.
+
+Tree changes reconcile only the workspace model identified by the changed URI. Existing terminal sessions and subscriptions survive moves, renames, metadata changes, inherited-setting changes, and launch-setting changes. Added nodes appear in place, removed leaves close their matching sessions, and newly applicable `onOpen` policies retain automatic launch behavior. State-only changes refresh attention without rebuilding the engine.
 
 ## Distinguish definitions from sessions
 
@@ -33,6 +36,8 @@ An interactive leaf without `shell` uses the user's default VS Code terminal pro
 
 TreeTY marks sessions as stopped, starting, idle, running, or failed. VS Code terminal persistence allows the adapter to reattach matching TreeTY sessions after an extension-host restart rather than creating duplicates.
 
+Attention is a separate durable boolean. A terminal that needs attention receives a small `!` decoration with the tooltip `Needs attention`; ancestor groups receive the same decoration while descendants need attention. Opening or revealing the terminal clears it without changing the lifecycle icon or status description.
+
 ## Connect Explorer and Source Control
 
 `TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its configured project directory to the VS Code workspace:
@@ -41,9 +46,11 @@ TreeTY marks sessions as stopped, starting, idle, running, or failed. VS Code te
 - `prompt` asks before adding an external directory.
 - `always` adds the directory automatically.
 
-The setting defaults to `never`. No `projectDir` means no add-folder action. Adding the folder exposes it to Explorer and lets VS Code's native Source Control integration discover repositories there. Use `TreeTY: Add Project Directory to VS Code Workspace...` from a terminal's context menu for an explicit one-time action. TreeTY shows the exact absolute path before changing the workspace.
+The setting defaults to `never`. No `projectDir` means no add-folder action. Adding the folder exposes it to Explorer and lets VS Code's native Source Control integration discover repositories there. Use Add Project Directory to VS Code Workspace from a terminal's actions or context menu for an explicit one-time action. TreeTY shows the exact absolute path before changing the workspace.
 
-Use Configure Node from a group or terminal context menu to edit `cwd`, `projectDir`, environment overrides, freeform metadata, or restart policy. Hover a node to inspect its resolved paths and stable ID.
+Group hover controls expose create terminal, create group, delete, and actions. Terminal hover controls expose delete and actions. The actions gear stays at the far right and opens a complete picker for the node, including delete, group creation shortcuts, and applicable terminal session actions. Right-click remains available, and its action labels omit the redundant TreeTY category shown in the global Command Palette.
+
+Use Configure from a group or terminal actions menu to edit `cwd`, `projectDir`, environment overrides, freeform metadata, or restart policy. Move opens a searchable, collapsible representation of the tree with every group expanded. Use the top-right controls to expand or collapse the entire tree, or select an individual group to toggle it. A destination row orders its inline controls as insert above, insert below, and move inside when applicable, which keeps the inside arrow at the far right. Terminal rows receive an extra indentation step so the hierarchy remains clear. The editor supports terminals, whole groups, and cross-group moves without generating every possible insertion point as a separate row. Hover a node to inspect its resolved paths and stable ID.
 
 The adapter uses `@treety/core` to inject `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID` into each native terminal. `TREETY_NODE_METADATA` is a launch-time snapshot; use `treety metadata get` for current configuration after metadata changes.
 

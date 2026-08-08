@@ -4,10 +4,21 @@
   "private": true,
   "description": "A hierarchical terminal workspace for VS Code and future hosts.",
   "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "packages/pi/extension.ts"
+    ],
+    "skills": [
+      "skills"
+    ]
+  },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter treety run build",
-    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter treety run check",
+    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter @treety/pi run build && pnpm --filter treety run build",
+    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter @treety/pi run check && pnpm --filter treety run check",
     "package": "node scripts/package-vscode-extension.mjs",
     "package:pre-release": "node scripts/package-vscode-extension.mjs --pre-release",
     "package:snapshot": "node scripts/package-vscode-extension.mjs --snapshot",
@@ -18,7 +29,7 @@
     "release:publish:core": "pnpm --filter @treety/core publish --access public",
     "release:publish:cli": "pnpm --filter @treety/cli publish --access public",
     "release:publish:vscode": "node scripts/publish-vscode-extension.mjs --pre-release",
-    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test"
+    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

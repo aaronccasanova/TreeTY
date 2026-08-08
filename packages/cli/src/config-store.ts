@@ -2,11 +2,14 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import {
-  formatTreeConfigContent,
-  parseTreeConfigContent,
+  loadTreeConfigFile,
+  mutateTreeConfigFile,
   treeTYConfigFileEnvironmentName,
   TreeConfig,
+  writeTreeConfigFile,
 } from "@treety/core";
+
+export { mutateTreeConfigFile };
 
 export interface TreeConfigLocationOptions {
   configFileName?: string;
@@ -54,40 +57,14 @@ export async function resolveTreeConfigFilePath(
 export async function loadTreeConfig(
   treeConfigFilePath: string,
 ): Promise<TreeConfig> {
-  let treeConfigFileContent: string;
-
-  try {
-    treeConfigFileContent = await fs.readFile(treeConfigFilePath, "utf8");
-  } catch (error) {
-    if (getErrorCode(error) === "ENOENT") {
-      throw new Error(
-        `No TreeTY configuration exists at ${treeConfigFilePath}. Run "treety init" first.`,
-      );
-    }
-
-    throw error;
-  }
-
-  return parseTreeConfigContent(treeConfigFileContent);
+  return await loadTreeConfigFile(treeConfigFilePath);
 }
 
 export async function writeTreeConfig(
   treeConfigFilePath: string,
   treeConfig: TreeConfig,
 ): Promise<void> {
-  const treeConfigDirPath = path.dirname(treeConfigFilePath);
-  const temporaryConfigFilePath = path.join(
-    treeConfigDirPath,
-    `.tree-${process.pid}-${Date.now()}.json`,
-  );
-
-  await fs.mkdir(treeConfigDirPath, { recursive: true });
-  await fs.writeFile(
-    temporaryConfigFilePath,
-    formatTreeConfigContent(treeConfig),
-    "utf8",
-  );
-  await fs.rename(temporaryConfigFilePath, treeConfigFilePath);
+  await writeTreeConfigFile(treeConfigFilePath, treeConfig);
 }
 
 export async function getFileExists(filePath: string): Promise<boolean> {
