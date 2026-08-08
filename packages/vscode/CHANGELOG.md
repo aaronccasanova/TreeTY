@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- Add an actions gear toggle for manually marking or clearing a terminal's durable attention.
+## 0.1.4 - 2026-08-08
+
+- Add concise **Mark needs attention** and **Clear attention** actions to both the terminal actions gear and right-click menu.
 - Prevent attention decorations from flickering when opening other terminals by skipping unchanged state writes and invalidating only affected terminal and ancestor decorations.
 
 ## 0.1.3 - 2026-08-07

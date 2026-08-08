@@ -170,6 +170,16 @@ export class TreeTYTreeProvider
         ),
       );
 
+      for (const nodeId of workspaceModelChange.nodeIds) {
+        const nodeTreeEntry = this.nodeTreeEntryByWorkspaceId
+          .get(workspaceModelChange.workspaceId)
+          ?.get(nodeId);
+
+        if (nodeTreeEntry?.treeNode.kind === "terminal") {
+          this.treeDataChangeEmitter.fire(nodeTreeEntry);
+        }
+      }
+
       return;
     }
 
@@ -329,13 +339,18 @@ function buildTerminalTreeItem(
   const showStatusDescriptions = vscode.workspace
     .getConfiguration("treety")
     .get<boolean>("showStatusDescriptions", true);
+  const terminalAttentionContext = nodeTreeEntry.workspaceModel.treeState.nodes[
+    nodeTreeEntry.treeNode.id
+  ]
+    ? "needsAttention"
+    : "clearAttention";
 
   terminalTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
   terminalTreeItem.resourceUri = getNodeDecorationUri(
     nodeTreeEntry.workspaceModel.id,
     nodeTreeEntry.treeNode.id,
   );
-  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}`;
+  terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}.${terminalAttentionContext}`;
   terminalTreeItem.iconPath = getTerminalStatusIcon(terminalSessionState.status);
   terminalTreeItem.description = showStatusDescriptions
     ? terminalSessionState.status

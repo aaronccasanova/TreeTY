@@ -84,6 +84,16 @@ export async function activate(
         treeTYController.stopTerminal(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.markTerminalAttention",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.setTerminalAttention(nodeTreeEntry, true),
+    ),
+    registerAsyncCommand(
+      "treety.clearTerminalAttention",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.setTerminalAttention(nodeTreeEntry, false),
+    ),
+    registerAsyncCommand(
       "treety.addDirectoryToWorkspace",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.addNodeDirectoryToWorkspace(nodeTreeEntry),
