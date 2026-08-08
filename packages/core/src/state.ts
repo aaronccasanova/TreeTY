@@ -112,6 +112,41 @@ export function getTreeNodeNeedsAttention(
   );
 }
 
+export function getAffectedTreeNodeAttentionIds(
+  treeNodes: readonly ResolvedTreeNode[],
+  previousTreeState: TreeState,
+  treeState: TreeState,
+): string[] {
+  const stateNodeIds = new Set([
+    ...Object.keys(previousTreeState.nodes),
+    ...Object.keys(treeState.nodes),
+  ]);
+  const changedAttentionNodeIds = new Set<string>();
+
+  for (const stateNodeId of stateNodeIds) {
+    if (
+      Boolean(previousTreeState.nodes[stateNodeId]) ===
+      Boolean(treeState.nodes[stateNodeId])
+    ) {
+      continue;
+    }
+
+    changedAttentionNodeIds.add(stateNodeId);
+  }
+
+  const affectedAttentionNodeIds: string[] = [];
+
+  for (const treeNode of treeNodes) {
+    addAffectedTreeNodeAttentionIds(
+      treeNode,
+      changedAttentionNodeIds,
+      affectedAttentionNodeIds,
+    );
+  }
+
+  return affectedAttentionNodeIds;
+}
+
 export async function loadTreeStateFile(
   treeConfigFilePath: string,
 ): Promise<TreeState> {
@@ -196,6 +231,40 @@ async function mutateTreeStateFile(
     (treeState) => treeState,
     { createDocument: createEmptyTreeState },
   );
+}
+
+function addAffectedTreeNodeAttentionIds(
+  treeNode: ResolvedTreeNode,
+  changedAttentionNodeIds: ReadonlySet<string>,
+  affectedAttentionNodeIds: string[],
+): boolean {
+  if (treeNode.kind === "terminal") {
+    if (!changedAttentionNodeIds.has(treeNode.id)) return false;
+
+    affectedAttentionNodeIds.push(treeNode.id);
+
+    return true;
+  }
+
+  let hasAffectedDescendant = false;
+
+  for (const childTreeNode of treeNode.children) {
+    if (
+      addAffectedTreeNodeAttentionIds(
+        childTreeNode,
+        changedAttentionNodeIds,
+        affectedAttentionNodeIds,
+      )
+    ) {
+      hasAffectedDescendant = true;
+    }
+  }
+
+  if (hasAffectedDescendant) {
+    affectedAttentionNodeIds.push(treeNode.id);
+  }
+
+  return hasAffectedDescendant;
 }
 
 function getTerminalNodeIds(treeNodeConfigs: TreeNodeConfig[]): Set<string> {

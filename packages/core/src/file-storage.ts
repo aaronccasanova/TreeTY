@@ -42,14 +42,32 @@ export async function mutateDocumentFile<Document, Result = Document>(
       parseDocumentFileContent,
       options.createDocument,
     );
+    const originalDocumentFileContent = formatDocumentFileContent(document);
     const updatedDocument = await mutateDocument(document);
-    const documentFileContent = formatDocumentFileContent(updatedDocument);
+    const updatedDocumentFileContent =
+      formatDocumentFileContent(updatedDocument);
 
-    await writeFileAtomically(documentFilePath, documentFileContent);
+    if (updatedDocumentFileContent !== originalDocumentFileContent) {
+      await writeFileAtomically(documentFilePath, updatedDocumentFileContent);
+    } else if (!(await getFileExists(documentFilePath))) {
+      await writeFileAtomically(documentFilePath, updatedDocumentFileContent);
+    }
 
     return getTransactionResult(updatedDocument);
   } finally {
     await releaseFileLock(lockFilePath, lockFileHandle);
+  }
+}
+
+async function getFileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+
+    return true;
+  } catch (error) {
+    if (getErrorCode(error) === "ENOENT") return false;
+
+    throw error;
   }
 }
 

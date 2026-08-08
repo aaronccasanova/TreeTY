@@ -4,15 +4,22 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as test from "node:test";
 
+import { resolveTreeConfig } from "./config";
+import type { TreeState } from "./model";
 import {
   formatTreeStateContent,
+  getAffectedTreeNodeAttentionIds,
   getTreeNodeNeedsAttention,
   getTreeStateFilePath,
   loadTreeStateFile,
   parseTreeStateContent,
   setTreeNodeAttention,
 } from "./state";
-import { addTreeTerminal, createEmptyTreeConfig } from "./tree-editor";
+import {
+  addTreeGroup,
+  addTreeTerminal,
+  createEmptyTreeConfig,
+} from "./tree-editor";
 import { writeTreeConfigFile } from "./tree-storage";
 
 test.test("parses and formats only non-default attention state", () => {
@@ -73,6 +80,53 @@ test.test("propagates terminal attention through ancestor groups", () => {
   );
 });
 
+test.test("targets attention changes at terminals and ancestor groups", () => {
+  const treeConfigWithOuterGroup = addTreeGroup(createEmptyTreeConfig(), {
+    id: "outer",
+    name: "Outer",
+  });
+  const treeConfigWithInnerGroup = addTreeGroup(treeConfigWithOuterGroup, {
+    id: "inner",
+    name: "Inner",
+    parentId: "outer",
+  });
+  const treeConfig = addTreeTerminal(treeConfigWithInnerGroup, {
+    id: "shell",
+    name: "Shell",
+    parentId: "inner",
+  });
+  const previousTreeState: TreeState = { version: 1, nodes: {} };
+  const treeState: TreeState = {
+    version: 1,
+    nodes: {
+      shell: { needsAttention: true },
+      missing: { needsAttention: true },
+    },
+  };
+  const resolvedTreeConfig = resolveTreeConfig(
+    treeConfig,
+    "/workspace",
+    treeState,
+  );
+
+  assert.deepEqual(
+    getAffectedTreeNodeAttentionIds(
+      resolvedTreeConfig.tree,
+      previousTreeState,
+      treeState,
+    ),
+    ["shell", "inner", "outer"],
+  );
+  assert.deepEqual(
+    getAffectedTreeNodeAttentionIds(
+      resolvedTreeConfig.tree,
+      treeState,
+      treeState,
+    ),
+    [],
+  );
+});
+
 test.test("mutates attention idempotently and prunes stale nodes", async () => {
   const temporaryDirPath = await fs.mkdtemp(
     path.join(os.tmpdir(), "treety-state-"),
@@ -100,10 +154,18 @@ test.test("mutates attention idempotently and prunes stale nodes", async () => {
       "shell",
       true,
     );
+    const stateFileStat = await fs.stat(
+      getTreeStateFilePath(treeConfigFilePath),
+    );
+
     await setTreeNodeAttention(
       treeConfigFilePath,
       "shell",
       true,
+    );
+
+    const unchangedStateFileStat = await fs.stat(
+      getTreeStateFilePath(treeConfigFilePath),
     );
 
     assert.deepEqual(await loadTreeStateFile(treeConfigFilePath), {
@@ -112,6 +174,7 @@ test.test("mutates attention idempotently and prunes stale nodes", async () => {
         shell: { needsAttention: true },
       },
     });
+    assert.equal(unchangedStateFileStat.ino, stateFileStat.ino);
 
     await setTreeNodeAttention(
       treeConfigFilePath,

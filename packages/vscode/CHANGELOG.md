@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent attention decorations from flickering when opening other terminals by skipping unchanged state writes and invalidating only affected terminal and ancestor decorations.
+
 ## 0.1.3 - 2026-08-07
 
 - Add any group or terminal's project directory, live current working directory, or configured working directory to the VS Code workspace on demand. Groups without a configured directory offer a filterable list of resolved descendant directories.

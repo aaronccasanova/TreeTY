@@ -5,6 +5,7 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
+  getAffectedTreeNodeAttentionIds,
   getTreeStateFilePath,
   getTreeNode,
   loadTreeStateFile,
@@ -36,6 +37,7 @@ import type {
   ConfiguredWorkspaceModel,
   TreeConfigSource,
   WorkspaceModel,
+  WorkspaceModelChange,
   WorkspaceModelSource,
 } from "./workspace-model";
 
@@ -115,7 +117,8 @@ const configFileName = "tree.json";
 const stateFileName = "state.json";
 
 export class TreeTYController implements WorkspaceModelSource, vscode.Disposable {
-  private readonly workspaceModelChangeEmitter = new vscode.EventEmitter<void>();
+  private readonly workspaceModelChangeEmitter =
+    new vscode.EventEmitter<WorkspaceModelChange>();
 
   private readonly globalConfigFileUri = getGlobalConfigFileUri();
 
@@ -170,7 +173,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
             "treety.showStatusDescriptions",
           )
         ) {
-          this.workspaceModelChangeEmitter.fire();
+          this.workspaceModelChangeEmitter.fire({ kind: "tree" });
         }
 
         if (
@@ -645,6 +648,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       return;
     }
 
+    const previousTreeState = workspaceModel.treeState;
     const treeConfig =
       changedFileKind === "config"
         ? parseTreeConfigContent(
@@ -670,7 +674,25 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     workspaceModel.treeState = treeState;
     workspaceModel.resolvedTreeConfig = resolvedTreeConfig;
 
-    this.workspaceModelChangeEmitter.fire();
+    if (changedFileKind === "config") {
+      this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
+
+      return;
+    }
+
+    const affectedAttentionNodeIds = getAffectedTreeNodeAttentionIds(
+      resolvedTreeConfig.tree,
+      previousTreeState,
+      treeState,
+    );
+
+    if (affectedAttentionNodeIds.length === 0) return;
+
+    this.workspaceModelChangeEmitter.fire({
+      kind: "attention",
+      workspaceId: workspaceModel.id,
+      nodeIds: affectedAttentionNodeIds,
+    });
   }
 
   private async reloadWorkspaceModel(
@@ -709,7 +731,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     this.workspaceModels[workspaceModelIndex] = nextWorkspaceModel;
-    this.workspaceModelChangeEmitter.fire();
+    this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
   }
 
   private async reloadWorkspaces(): Promise<void> {
@@ -741,7 +763,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       }
     }
 
-    this.workspaceModelChangeEmitter.fire();
+    this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
   }
 
   private async loadWorkspaceModel(
@@ -789,7 +811,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         vscodeTerminalHost,
       );
 
-      treeTYEngine.subscribe(() => this.workspaceModelChangeEmitter.fire());
+      treeTYEngine.subscribe((terminalSessionState) =>
+        this.workspaceModelChangeEmitter.fire({
+          kind: "terminal",
+          workspaceId: workspaceModelLocation.id,
+          nodeIds: [terminalSessionState.nodeId],
+        }),
+      );
       await treeTYEngine.start();
 
       return {
@@ -888,6 +916,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private async clearTerminalAttention(
     nodeTreeEntry: NodeTreeEntry,
   ): Promise<void> {
+    if (
+      nodeTreeEntry.treeNode.kind !== "terminal" ||
+      !nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id]
+    ) {
+      return;
+    }
+
     await setTreeNodeAttention(
       nodeTreeEntry.workspaceModel.configFileUri.fsPath,
       nodeTreeEntry.treeNode.id,
