@@ -1082,9 +1082,18 @@ async function showMoveTreeEditor(
 ): Promise<MoveTreeNodeOptions | undefined> {
   const moveTreeQuickPick =
     vscode.window.createQuickPick<MoveTreeQuickPickItem>();
-  const collapsedGroupIds = new Set(
-    getGroupIds(nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree),
+  const groupIds = getGroupIds(
+    nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
   );
+  const collapsedGroupIds = new Set<string>();
+  const expandEntireTreeButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon("expand-all"),
+    tooltip: "Expand entire tree",
+  };
+  const collapseEntireTreeButton: vscode.QuickInputButton = {
+    iconPath: new vscode.ThemeIcon("collapse-all"),
+    tooltip: "Collapse entire tree",
+  };
   let isRootCollapsed = false;
   let isResolved = false;
 
@@ -1100,6 +1109,10 @@ async function showMoveTreeEditor(
   moveTreeQuickPick.placeholder = "Search the tree";
   moveTreeQuickPick.prompt =
     "Use a row's arrows to insert above, inside, or below. Select a group to expand or collapse it.";
+  moveTreeQuickPick.buttons = [
+    expandEntireTreeButton,
+    collapseEntireTreeButton,
+  ];
   moveTreeQuickPick.matchOnDescription = true;
 
   refreshMoveTreeQuickPickItems();
@@ -1117,6 +1130,22 @@ async function showMoveTreeEditor(
     };
 
     moveTreeQuickPick.onDidChangeValue(refreshMoveTreeQuickPickItems);
+
+    moveTreeQuickPick.onDidTriggerButton((button) => {
+      if (button === expandEntireTreeButton) {
+        collapsedGroupIds.clear();
+        isRootCollapsed = false;
+      } else if (button === collapseEntireTreeButton) {
+        for (const groupId of groupIds) collapsedGroupIds.add(groupId);
+
+        isRootCollapsed = true;
+      } else {
+        return;
+      }
+
+      moveTreeQuickPick.value = "";
+      refreshMoveTreeQuickPickItems();
+    });
 
     moveTreeQuickPick.onDidAccept(() => {
       const selectedMoveTreeQuickPickItem = moveTreeQuickPick.selectedItems[0];
