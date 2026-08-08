@@ -1,14 +1,14 @@
 import * as path from "node:path";
 
-import {
-  getTreeNodeNeedsAttention,
+import { getTreeNodeNeedsAttention } from "@treety/core";
+import type {
   ResolvedTreeNode,
   TerminalSessionState,
   TerminalStatus,
 } from "@treety/core";
 import * as vscode from "vscode";
 
-import {
+import type {
   ConfiguredWorkspaceModel,
   WorkspaceModel,
   WorkspaceModelSource,

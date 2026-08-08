@@ -2,14 +2,16 @@ import * as crypto from "node:crypto";
 
 import {
   buildTreeTYTerminalEnvironment,
+  treeTYNodeIdEnvironmentName,
+  treeTYSessionIdEnvironmentName,
+} from "@treety/core";
+import type {
   Disposable,
   HostedTerminalSession,
   TerminalHost,
   TerminalHostEvent,
   TerminalHostEventListener,
   TerminalLaunchRequest,
-  treeTYNodeIdEnvironmentName,
-  treeTYSessionIdEnvironmentName,
 } from "@treety/core";
 import * as vscode from "vscode";
 

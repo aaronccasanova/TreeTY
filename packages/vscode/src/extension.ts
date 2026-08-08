@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 
 import { showCommandError, TreeTYController } from "./controller";
-import { NodeTreeEntry, TreeEntry, TreeTYTreeProvider } from "./tree-provider";
+import { TreeTYTreeProvider } from "./tree-provider";
+import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 
 export async function activate(
   extensionContext: vscode.ExtensionContext,
