@@ -66,6 +66,10 @@ interface MoveTreeEditorState {
   showAllGroups: boolean;
 }
 
+interface NodeActionQuickPickItem extends vscode.QuickPickItem {
+  execute: () => Promise<void>;
+}
+
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
 type GlobalTreeVisibility = "always" | "fallback" | "never";
 
@@ -338,6 +342,64 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       nodeTreeEntry.workspaceModel,
       (treeConfig) => moveTreeNode(treeConfig, moveTreeNodeOptions),
     );
+  }
+
+  public async showNodeActions(nodeTreeEntry: NodeTreeEntry): Promise<void> {
+    const nodeActionQuickPickItems: NodeActionQuickPickItem[] = [
+      {
+        execute: () => this.renameNode(nodeTreeEntry),
+        label: "$(edit) Rename",
+      },
+      {
+        execute: () => this.configureNode(nodeTreeEntry),
+        label: "$(settings-gear) Configure...",
+      },
+      {
+        execute: () => this.moveNode(nodeTreeEntry),
+        label: "$(type-hierarchy-sub) Move...",
+      },
+    ];
+
+    if (nodeTreeEntry.treeNode.kind === "terminal") {
+      const terminalSessionState = this.getTerminalSessionState(
+        nodeTreeEntry.workspaceModel,
+        nodeTreeEntry.treeNode.id,
+      );
+
+      nodeActionQuickPickItems.push({
+        execute: () => this.restartTerminal(nodeTreeEntry),
+        label: "$(debug-restart) Restart terminal",
+      });
+
+      if (
+        terminalSessionState.status === "idle" ||
+        terminalSessionState.status === "running" ||
+        terminalSessionState.status === "starting"
+      ) {
+        nodeActionQuickPickItems.push({
+          execute: () => this.stopTerminal(nodeTreeEntry),
+          label: "$(debug-stop) Stop terminal",
+        });
+      }
+
+      if (nodeTreeEntry.treeNode.projectDir) {
+        nodeActionQuickPickItems.push({
+          execute: () =>
+            this.addTerminalDirectoryToWorkspace(nodeTreeEntry),
+          label: "$(folder-library) Add project directory to workspace...",
+        });
+      }
+    }
+
+    const nodeActionQuickPickItem = await vscode.window.showQuickPick(
+      nodeActionQuickPickItems,
+      {
+        title: nodeTreeEntry.treeNode.name,
+        placeHolder: "Choose an action",
+      },
+    );
+
+    await nodeActionQuickPickItem?.execute();
   }
 
   public async deleteNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {

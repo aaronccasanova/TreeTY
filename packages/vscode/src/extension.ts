@@ -58,6 +58,11 @@ export async function activate(
       (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.showNodeActions",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.showNodeActions(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
       "treety.deleteNode",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.deleteNode(nodeTreeEntry),

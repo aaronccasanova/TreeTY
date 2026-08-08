@@ -5,6 +5,7 @@
 - Reconcile changed trees in place while preserving matching live terminal sessions.
 - Add a searchable tree editor with inline placement controls, expanded-by-default navigation, and expand-all or collapse-all actions for moving terminals and groups.
 - Remove redundant Open Terminal and Refresh buttons from the tree view.
+- Add an actions gear to group and terminal rows, simplify terminal hover controls, and remove redundant TreeTY prefixes from context-menu labels.
 - Render durable attention independently from lifecycle status and propagate it to ancestor groups.
 - Route configuration and state mutations through shared cooperative locks and atomic replacement.
 
