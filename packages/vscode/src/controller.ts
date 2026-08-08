@@ -9,6 +9,7 @@ import {
   getTreeNode,
   JsonValue,
   loadTreeStateFile,
+  MoveTreeNodeOptions,
   moveTreeNode,
   mutateTreeConfigFile,
   parseTreeConfigContent,
@@ -46,16 +47,23 @@ interface WorkspaceModelLocation {
   configSource: TreeConfigSource;
 }
 
-interface MoveDestinationQuickPickItem extends vscode.QuickPickItem {
-  afterId?: string;
-  beforeId?: string;
-  parentId?: string;
+type MoveAction = "after" | "before" | "inside";
+
+interface MoveTreeQuickPickButton extends vscode.QuickInputButton {
+  action: MoveAction;
 }
 
-interface MoveContainer {
-  children: readonly ResolvedTreeNode[];
-  name: string;
-  parentId?: string;
+interface MoveTreeQuickPickItem extends vscode.QuickPickItem {
+  buttons?: readonly MoveTreeQuickPickButton[];
+  containerId?: string;
+  isContainer: boolean;
+  treeNode?: ResolvedTreeNode;
+}
+
+interface MoveTreeEditorState {
+  collapsedGroupIds: ReadonlySet<string>;
+  isRootCollapsed: boolean;
+  showAllGroups: boolean;
 }
 
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
@@ -322,30 +330,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   }
 
   public async moveNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    const moveDestinationQuickPickItems = getMoveDestinationQuickPickItems(
-      nodeTreeEntry,
-    );
+    const moveTreeNodeOptions = await showMoveTreeEditor(nodeTreeEntry);
 
-    const moveDestinationQuickPickItem = await vscode.window.showQuickPick(
-      moveDestinationQuickPickItems,
-      {
-        title: `Move ${nodeTreeEntry.treeNode.name}`,
-        placeHolder: "Choose an exact insertion point",
-        matchOnDescription: true,
-      },
-    );
-
-    if (!moveDestinationQuickPickItem) return;
+    if (!moveTreeNodeOptions) return;
 
     await this.writeWorkspaceTreeConfig(
       nodeTreeEntry.workspaceModel,
-      (treeConfig) =>
-        moveTreeNode(treeConfig, {
-          afterId: moveDestinationQuickPickItem.afterId,
-          beforeId: moveDestinationQuickPickItem.beforeId,
-          nodeId: nodeTreeEntry.treeNode.id,
-          parentId: moveDestinationQuickPickItem.parentId,
-        }),
+      (treeConfig) => moveTreeNode(treeConfig, moveTreeNodeOptions),
     );
   }
 
@@ -1086,71 +1077,240 @@ function getTargetDescription(
   return `"${treeEntry.treeNode.name}"`;
 }
 
-function getMoveDestinationQuickPickItems(
+async function showMoveTreeEditor(
   nodeTreeEntry: NodeTreeEntry,
-): MoveDestinationQuickPickItem[] {
-  const moveDestinationQuickPickItems: MoveDestinationQuickPickItem[] = [];
-  const pendingMoveContainers: MoveContainer[] = [
+): Promise<MoveTreeNodeOptions | undefined> {
+  const moveTreeQuickPick =
+    vscode.window.createQuickPick<MoveTreeQuickPickItem>();
+  const collapsedGroupIds = new Set(
+    getGroupIds(nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree),
+  );
+  let isRootCollapsed = false;
+  let isResolved = false;
+
+  const refreshMoveTreeQuickPickItems = (): void => {
+    moveTreeQuickPick.items = getMoveTreeQuickPickItems(nodeTreeEntry, {
+      collapsedGroupIds,
+      isRootCollapsed,
+      showAllGroups: moveTreeQuickPick.value.trim() !== "",
+    });
+  };
+
+  moveTreeQuickPick.title = `Move ${nodeTreeEntry.treeNode.name}`;
+  moveTreeQuickPick.placeholder = "Search the tree";
+  moveTreeQuickPick.prompt =
+    "Use a row's arrows to insert above, inside, or below. Select a group to expand or collapse it.";
+  moveTreeQuickPick.matchOnDescription = true;
+
+  refreshMoveTreeQuickPickItems();
+
+  return new Promise((resolve) => {
+    const resolveMoveTreeEditor = (
+      moveTreeNodeOptions?: MoveTreeNodeOptions,
+    ): void => {
+      if (isResolved) return;
+
+      isResolved = true;
+      resolve(moveTreeNodeOptions);
+      moveTreeQuickPick.hide();
+      moveTreeQuickPick.dispose();
+    };
+
+    moveTreeQuickPick.onDidChangeValue(refreshMoveTreeQuickPickItems);
+
+    moveTreeQuickPick.onDidAccept(() => {
+      const selectedMoveTreeQuickPickItem = moveTreeQuickPick.selectedItems[0];
+
+      if (!selectedMoveTreeQuickPickItem?.isContainer) return;
+
+      if (!selectedMoveTreeQuickPickItem.containerId) {
+        isRootCollapsed = !isRootCollapsed;
+      } else if (
+        collapsedGroupIds.has(selectedMoveTreeQuickPickItem.containerId)
+      ) {
+        collapsedGroupIds.delete(selectedMoveTreeQuickPickItem.containerId);
+      } else {
+        collapsedGroupIds.add(selectedMoveTreeQuickPickItem.containerId);
+      }
+
+      refreshMoveTreeQuickPickItems();
+    });
+
+    moveTreeQuickPick.onDidTriggerItemButton((buttonEvent) => {
+      const moveTreeQuickPickButton =
+        buttonEvent.button as MoveTreeQuickPickButton;
+      const targetTreeNode = buttonEvent.item.treeNode;
+      const moveTreeNodeOptions: MoveTreeNodeOptions = {
+        nodeId: nodeTreeEntry.treeNode.id,
+      };
+
+      if (moveTreeQuickPickButton.action === "inside") {
+        moveTreeNodeOptions.parentId = targetTreeNode?.id;
+      } else if (
+        moveTreeQuickPickButton.action === "before" &&
+        targetTreeNode
+      ) {
+        moveTreeNodeOptions.beforeId = targetTreeNode.id;
+      } else if (
+        moveTreeQuickPickButton.action === "after" &&
+        targetTreeNode
+      ) {
+        moveTreeNodeOptions.afterId = targetTreeNode.id;
+      } else {
+        return;
+      }
+
+      resolveMoveTreeEditor(moveTreeNodeOptions);
+    });
+
+    moveTreeQuickPick.onDidHide(() => resolveMoveTreeEditor());
+
+    moveTreeQuickPick.show();
+  });
+}
+
+function getMoveTreeQuickPickItems(
+  nodeTreeEntry: NodeTreeEntry,
+  moveTreeEditorState: MoveTreeEditorState,
+): MoveTreeQuickPickItem[] {
+  const sourceTreeNodeIds = new Set(getTreeNodeIds(nodeTreeEntry.treeNode));
+  const rootName = `${nodeTreeEntry.workspaceModel.name} root`;
+  const rootIsExpanded =
+    moveTreeEditorState.showAllGroups || !moveTreeEditorState.isRootCollapsed;
+  const moveTreeQuickPickItems: MoveTreeQuickPickItem[] = [
     {
-      children: nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
-      name: `${nodeTreeEntry.workspaceModel.name} root`,
-      parentId: undefined,
+      buttons: [getMoveTreeQuickPickButton("inside", rootName)],
+      description: "tree root",
+      isContainer: true,
+      label: `$(${rootIsExpanded ? "chevron-down" : "chevron-right"}) $(root-folder) ${rootName}`,
     },
   ];
 
-  while (pendingMoveContainers.length > 0) {
-    const pendingMoveContainer = pendingMoveContainers.shift();
+  if (!rootIsExpanded) return moveTreeQuickPickItems;
 
-    if (!pendingMoveContainer) continue;
+  appendMoveTreeQuickPickItems(
+    moveTreeQuickPickItems,
+    nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
+    nodeTreeEntry.treeNode.id,
+    sourceTreeNodeIds,
+    moveTreeEditorState,
+    1,
+    rootName,
+  );
 
-    const moveContainerChildren = pendingMoveContainer.children.filter(
-      (treeNode) => treeNode.id !== nodeTreeEntry.treeNode.id,
+  return moveTreeQuickPickItems;
+}
+
+function appendMoveTreeQuickPickItems(
+  moveTreeQuickPickItems: MoveTreeQuickPickItem[],
+  treeNodes: readonly ResolvedTreeNode[],
+  sourceTreeNodeId: string,
+  sourceTreeNodeIds: ReadonlySet<string>,
+  moveTreeEditorState: MoveTreeEditorState,
+  depth: number,
+  parentPath: string,
+): void {
+  for (const treeNode of treeNodes) {
+    const isSourceTreeNode = sourceTreeNodeIds.has(treeNode.id);
+    const isGroupExpanded =
+      treeNode.kind === "group" &&
+      (moveTreeEditorState.showAllGroups ||
+        !moveTreeEditorState.collapsedGroupIds.has(treeNode.id));
+    const moveTreeQuickPickButtons = isSourceTreeNode
+      ? undefined
+      : getMoveTreeQuickPickButtons(treeNode);
+
+    moveTreeQuickPickItems.push({
+      buttons: moveTreeQuickPickButtons,
+      containerId: treeNode.kind === "group" ? treeNode.id : undefined,
+      description: treeNode.id === sourceTreeNodeId ? "moving" : parentPath,
+      isContainer: treeNode.kind === "group",
+      label: `${"  ".repeat(depth)}${getMoveTreeNodeLabelIcon(treeNode, isGroupExpanded)} ${treeNode.name}`,
+      treeNode,
+    });
+
+    if (treeNode.kind !== "group" || !isGroupExpanded) continue;
+
+    appendMoveTreeQuickPickItems(
+      moveTreeQuickPickItems,
+      treeNode.children,
+      sourceTreeNodeId,
+      sourceTreeNodeIds,
+      moveTreeEditorState,
+      depth + 1,
+      `${parentPath} / ${treeNode.name}`,
     );
+  }
+}
 
-    if (moveContainerChildren.length === 0) {
-      moveDestinationQuickPickItems.push({
-        label: `$(list-tree) Only item in ${pendingMoveContainer.name}`,
-        description: "Append to the empty destination",
-        parentId: pendingMoveContainer.parentId,
-      });
-    } else {
-      const firstTreeNode = moveContainerChildren[0];
+function getMoveTreeQuickPickButtons(
+  treeNode: ResolvedTreeNode,
+): MoveTreeQuickPickButton[] {
+  const moveTreeQuickPickButtons = [
+    getMoveTreeQuickPickButton("before", treeNode.name),
+  ];
 
-      if (!firstTreeNode) continue;
-
-      moveDestinationQuickPickItems.push({
-        label: `$(arrow-up) First in ${pendingMoveContainer.name}`,
-        description: `Before "${firstTreeNode.name}"`,
-        beforeId: firstTreeNode.id,
-      });
-
-      for (const [childIndex, treeNode] of moveContainerChildren.entries()) {
-        const nextTreeNode = moveContainerChildren[childIndex + 1];
-
-        moveDestinationQuickPickItems.push({
-          label: nextTreeNode
-            ? `$(arrow-down) After "${treeNode.name}"`
-            : `$(arrow-down) Last in ${pendingMoveContainer.name}`,
-          description: nextTreeNode
-            ? `In ${pendingMoveContainer.name}, before "${nextTreeNode.name}"`
-            : `After "${treeNode.name}"`,
-          afterId: treeNode.id,
-        });
-      }
-    }
-
-    for (const treeNode of moveContainerChildren) {
-      if (treeNode.kind !== "group") continue;
-
-      pendingMoveContainers.push({
-        children: treeNode.children,
-        name: `${pendingMoveContainer.name} / "${treeNode.name}"`,
-        parentId: treeNode.id,
-      });
-    }
+  if (treeNode.kind === "group") {
+    moveTreeQuickPickButtons.push(
+      getMoveTreeQuickPickButton("inside", treeNode.name),
+    );
   }
 
-  return moveDestinationQuickPickItems;
+  moveTreeQuickPickButtons.push(
+    getMoveTreeQuickPickButton("after", treeNode.name),
+  );
+
+  return moveTreeQuickPickButtons;
+}
+
+function getMoveTreeQuickPickButton(
+  action: MoveAction,
+  targetName: string,
+): MoveTreeQuickPickButton {
+  const iconNameByAction: Record<MoveAction, string> = {
+    after: "arrow-down",
+    before: "arrow-up",
+    inside: "arrow-right",
+  };
+  const tooltipByAction: Record<MoveAction, string> = {
+    after: `Insert below "${targetName}"`,
+    before: `Insert above "${targetName}"`,
+    inside: `Move inside "${targetName}" (at the end)`,
+  };
+
+  return {
+    action,
+    iconPath: new vscode.ThemeIcon(iconNameByAction[action]),
+    tooltip: tooltipByAction[action],
+  };
+}
+
+function getMoveTreeNodeLabelIcon(
+  treeNode: ResolvedTreeNode,
+  isGroupExpanded: boolean,
+): string {
+  if (treeNode.kind === "terminal") return "$(terminal)";
+
+  return `$(${isGroupExpanded ? "chevron-down" : "chevron-right"}) $(folder)`;
+}
+
+function getGroupIds(treeNodes: readonly ResolvedTreeNode[]): string[] {
+  return treeNodes.flatMap((treeNode) => {
+    if (treeNode.kind === "terminal") return [];
+
+    return [treeNode.id, ...getGroupIds(treeNode.children)];
+  });
+}
+
+function getTreeNodeIds(treeNode: ResolvedTreeNode): string[] {
+  if (treeNode.kind === "terminal") return [treeNode.id];
+
+  return [
+    treeNode.id,
+    ...treeNode.children.flatMap((childTreeNode) =>
+      getTreeNodeIds(childTreeNode),
+    ),
+  ];
 }
 
 function getTerminalNodeIds(treeNode: ResolvedTreeNode): string[] {

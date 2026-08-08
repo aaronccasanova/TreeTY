@@ -48,7 +48,7 @@ Attention is a separate durable boolean. A terminal that needs attention receive
 
 The setting defaults to `never`. No `projectDir` means no add-folder action. Adding the folder exposes it to Explorer and lets VS Code's native Source Control integration discover repositories there. Use `TreeTY: Add Project Directory to VS Code Workspace...` from a terminal's context menu for an explicit one-time action. TreeTY shows the exact absolute path before changing the workspace.
 
-Use Configure Node from a group or terminal context menu to edit `cwd`, `projectDir`, environment overrides, freeform metadata, or restart policy. Move opens one searchable picker with exact insertion points, including first or last in a root or group and positions after named siblings. The same picker moves terminals and groups without adding inline controls. Hover a node to inspect its resolved paths and stable ID.
+Use Configure Node from a group or terminal context menu to edit `cwd`, `projectDir`, environment overrides, freeform metadata, or restart policy. Move opens a searchable, collapsible representation of the tree. Use a destination row's inline controls to insert above, inside a root or group, or below. The editor supports terminals, whole groups, and cross-group moves without generating every possible insertion point as a separate row. Hover a node to inspect its resolved paths and stable ID.
 
 The adapter uses `@treety/core` to inject `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID` into each native terminal. `TREETY_NODE_METADATA` is a launch-time snapshot; use `treety metadata get` for current configuration after metadata changes.
 

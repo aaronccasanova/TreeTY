@@ -210,11 +210,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "treety.refresh",
-          "when": "view == treety.terminals",
-          "group": "navigation@8"
-        },
-        {
           "command": "treety.openConfig",
           "when": "view == treety.terminals",
           "group": "navigation@9"
@@ -222,24 +217,19 @@
       ],
       "view/item/context": [
         {
-          "command": "treety.openTerminal",
+          "command": "treety.restartTerminal",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "inline@1"
         },
         {
-          "command": "treety.restartTerminal",
-          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
-          "group": "inline@2"
-        },
-        {
           "command": "treety.stopTerminal",
           "when": "view == treety.terminals && (viewItem == treetyTerminal.idle || viewItem == treetyTerminal.running || viewItem == treetyTerminal.starting)",
-          "group": "inline@3"
+          "group": "inline@2"
         },
         {
           "command": "treety.deleteNode",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
-          "group": "inline@4"
+          "group": "inline@3"
         },
         {
           "command": "treety.openConfig",
