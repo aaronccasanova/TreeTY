@@ -7,6 +7,7 @@ interface PiSessionManager {
 }
 
 interface PiExtensionContext {
+  cwd: string;
   sessionManager: PiSessionManager;
 }
 
@@ -60,6 +61,8 @@ export default function registerTreeTYExtension(
 
       await runTreeTYCommand(extensionAPI, [
         "configure",
+        "--cwd",
+        commandContext.cwd,
         "--",
         "pi",
         "--session",

@@ -19,6 +19,11 @@ export async function activate(
     treeTYTreeView,
     vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
+    registerAsyncCommand("treety.collapseAll", async () => {
+      await vscode.commands.executeCommand(
+        "workbench.actions.treeView.treety.terminals.collapseAll",
+      );
+    }),
     registerAsyncCommand(
       "treety.initializeWorkspace",
       (treeEntry?: TreeEntry) =>

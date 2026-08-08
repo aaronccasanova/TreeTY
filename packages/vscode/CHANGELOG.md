@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Capture Pi's current working directory during `/treety-setup` so resumed sessions restart from the same directory.
+- Add a **Collapse All** action to the terminal tree toolbar and Command Palette.
+
 ## 0.1.4 - 2026-08-08
 
 - Add concise **Mark needs attention** and **Clear attention** actions to both the terminal actions gear and right-click menu.

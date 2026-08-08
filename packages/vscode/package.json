@@ -74,6 +74,12 @@
         "icon": "$(json)"
       },
       {
+        "command": "treety.collapseAll",
+        "title": "Collapse All",
+        "category": "TreeTY",
+        "icon": "$(collapse-all)"
+      },
+      {
         "command": "treety.createGroup",
         "title": "Create Group",
         "category": "TreeTY",
@@ -240,6 +246,11 @@
           "command": "treety.createGroup",
           "when": "view == treety.terminals",
           "group": "navigation@2"
+        },
+        {
+          "command": "treety.collapseAll",
+          "when": "view == treety.terminals",
+          "group": "navigation@3"
         },
         {
           "command": "treety.openConfig",
