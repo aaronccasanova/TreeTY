@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Reconcile changed trees in place while preserving matching live terminal sessions.
-- Add before/after sibling ordering to the Move flow.
+- Add exact insertion-point ordering through a single searchable Move picker.
 - Render durable attention independently from lifecycle status and propagate it to ancestor groups.
 - Route configuration and state mutations through shared cooperative locks and atomic replacement.
 

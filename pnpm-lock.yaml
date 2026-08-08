@@ -23,6 +23,8 @@ importers:
 
   packages/core: {}
 
+  packages/pi: {}
+
   packages/vscode:
     dependencies:
       '@treety/core':

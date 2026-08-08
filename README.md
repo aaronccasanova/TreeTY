@@ -35,6 +35,11 @@ packages/cli
   group and terminal creation
   list, inspect, configure, rename, order, metadata, attention, and remove commands
 
+packages/pi
+  TypeScript Pi extension loaded by the repository package manifest
+  session resume setup and lifecycle attention signaling
+  minimal local Pi API types with no Pi runtime dependency
+
 packages/vscode
   TreeDataProvider adapter
   vscode.Terminal host implementation
@@ -191,7 +196,7 @@ Select a local root, global root, or group, then use the view title controls to 
 
 Terminal rows expose open, restart, stop, and delete controls. Stop closes the native terminal while preserving its entry for a later restart. Delete removes the entry after confirmation. Groups and terminals also provide configure, rename, move, and delete actions from their context menus. Configure edits working directory, project directory, environment, metadata, and restart policy without opening JSON. Deleting a group confirms the descendant count and closes running terminals in that subtree. A valid CLI or file edit that removes a leaf also closes its matching live terminal.
 
-Move supports append-to-root, append-to-group, before-sibling, and after-sibling placement. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes; removed leaves close their matching sessions.
+Move uses one searchable picker of exact insertion points, such as first in a group, after a named sibling, or last at a root. It supports terminals and groups without adding inline movement controls. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes; removed leaves close their matching sessions.
 
 Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` adds a small `!` decoration to a terminal and its ancestor groups. Opening or revealing that terminal clears attention.
 
@@ -203,7 +208,7 @@ Install this repository as a Pi package:
 pi install git:github.com/aaronccasanova/TreeTY
 ```
 
-Run `/treety-setup` inside a TreeTY terminal. The extension stores `PI_SESSION_ID` at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi clears attention on `agent_start` and sets it on `agent_settled`. TreeTY core, CLI state, and VS Code rendering remain agent-agnostic; the repository extension composes their generic capabilities.
+Run `/treety-setup` inside a TreeTY terminal. The TypeScript extension in `packages/pi` stores `PI_SESSION_ID` at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi clears attention on `agent_start` and sets it on `agent_settled`. The package defines only the small Pi API boundary it uses and does not install Pi locally. TreeTY core, CLI state, and VS Code rendering remain agent-agnostic; the repository extension composes their generic capabilities.
 
 Opening a terminal can also add its explicitly configured project directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. `TreeTY: Explorer Directory Sync` defaults to `never` and also supports `prompt` or `always`. The terminal context menu exposes `TreeTY: Add Project Directory to VS Code Workspace...` only when a project directory is configured. The confirmation shows the exact absolute path before changing the workspace.
 

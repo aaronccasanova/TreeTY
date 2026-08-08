@@ -47,11 +47,16 @@ interface WorkspaceModelLocation {
 }
 
 interface MoveDestinationQuickPickItem extends vscode.QuickPickItem {
-  nodeId?: string;
+  afterId?: string;
+  beforeId?: string;
   parentId?: string;
 }
 
-type MovePlacement = "after" | "before" | "parent";
+interface MoveContainer {
+  children: readonly ResolvedTreeNode[];
+  name: string;
+  parentId?: string;
+}
 
 type ExplorerDirectorySyncMode = "always" | "never" | "prompt";
 type GlobalTreeVisibility = "always" | "fallback" | "never";
@@ -317,45 +322,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   }
 
   public async moveNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    const movePlacementQuickPickItem = await vscode.window.showQuickPick(
-      [
-        {
-          label: "$(list-tree) Append to root or group",
-          placement: "parent" as const,
-        },
-        {
-          label: "$(arrow-up) Place before a node",
-          placement: "before" as const,
-        },
-        {
-          label: "$(arrow-down) Place after a node",
-          placement: "after" as const,
-        },
-      ],
-      {
-        placeHolder: `Choose how to move "${nodeTreeEntry.treeNode.name}"`,
-      },
-    );
-
-    if (!movePlacementQuickPickItem) return;
-
     const moveDestinationQuickPickItems = getMoveDestinationQuickPickItems(
       nodeTreeEntry,
-      movePlacementQuickPickItem.placement,
     );
-
-    if (moveDestinationQuickPickItems.length === 0) {
-      void vscode.window.showInformationMessage(
-        `There is no valid destination for "${nodeTreeEntry.treeNode.name}".`,
-      );
-
-      return;
-    }
 
     const moveDestinationQuickPickItem = await vscode.window.showQuickPick(
       moveDestinationQuickPickItems,
       {
-        placeHolder: `Move "${nodeTreeEntry.treeNode.name}" to...`,
+        title: `Move ${nodeTreeEntry.treeNode.name}`,
+        placeHolder: "Choose an exact insertion point",
         matchOnDescription: true,
       },
     );
@@ -366,19 +341,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       nodeTreeEntry.workspaceModel,
       (treeConfig) =>
         moveTreeNode(treeConfig, {
-          afterId:
-            movePlacementQuickPickItem.placement === "after"
-              ? moveDestinationQuickPickItem.nodeId
-              : undefined,
-          beforeId:
-            movePlacementQuickPickItem.placement === "before"
-              ? moveDestinationQuickPickItem.nodeId
-              : undefined,
+          afterId: moveDestinationQuickPickItem.afterId,
+          beforeId: moveDestinationQuickPickItem.beforeId,
           nodeId: nodeTreeEntry.treeNode.id,
-          parentId:
-            movePlacementQuickPickItem.placement === "parent"
-              ? moveDestinationQuickPickItem.parentId
-              : undefined,
+          parentId: moveDestinationQuickPickItem.parentId,
         }),
     );
   }
@@ -1122,68 +1088,69 @@ function getTargetDescription(
 
 function getMoveDestinationQuickPickItems(
   nodeTreeEntry: NodeTreeEntry,
-  movePlacement: MovePlacement,
 ): MoveDestinationQuickPickItem[] {
   const moveDestinationQuickPickItems: MoveDestinationQuickPickItem[] = [];
+  const pendingMoveContainers: MoveContainer[] = [
+    {
+      children: nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
+      name: `${nodeTreeEntry.workspaceModel.name} root`,
+      parentId: undefined,
+    },
+  ];
 
-  if (movePlacement === "parent") {
-    moveDestinationQuickPickItems.push({
-      label: "$(root-folder) Root",
-      description: nodeTreeEntry.workspaceModel.name,
-    });
-  }
+  while (pendingMoveContainers.length > 0) {
+    const pendingMoveContainer = pendingMoveContainers.shift();
 
-  const pendingTreeNodes = nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree
-    .map((treeNode) => ({ treeNode, depth: 0 }));
+    if (!pendingMoveContainer) continue;
 
-  while (pendingTreeNodes.length > 0) {
-    const pendingTreeNode = pendingTreeNodes.shift();
+    const moveContainerChildren = pendingMoveContainer.children.filter(
+      (treeNode) => treeNode.id !== nodeTreeEntry.treeNode.id,
+    );
 
-    if (!pendingTreeNode) continue;
-
-    if (
-      pendingTreeNode.treeNode.id !== nodeTreeEntry.treeNode.id &&
-      !getTreeNodeContainsId(
-        nodeTreeEntry.treeNode,
-        pendingTreeNode.treeNode.id,
-      ) &&
-      (movePlacement !== "parent" || pendingTreeNode.treeNode.kind === "group")
-    ) {
+    if (moveContainerChildren.length === 0) {
       moveDestinationQuickPickItems.push({
-        label: `${pendingTreeNode.treeNode.kind === "group" ? "$(folder)" : "$(terminal)"} ${pendingTreeNode.treeNode.name}`,
-        description: `${"  ".repeat(pendingTreeNode.depth)}${pendingTreeNode.treeNode.cwd}`,
-        nodeId: pendingTreeNode.treeNode.id,
-        parentId:
-          movePlacement === "parent"
-            ? pendingTreeNode.treeNode.id
-            : undefined,
+        label: `$(list-tree) Only item in ${pendingMoveContainer.name}`,
+        description: "Append to the empty destination",
+        parentId: pendingMoveContainer.parentId,
       });
+    } else {
+      const firstTreeNode = moveContainerChildren[0];
+
+      if (!firstTreeNode) continue;
+
+      moveDestinationQuickPickItems.push({
+        label: `$(arrow-up) First in ${pendingMoveContainer.name}`,
+        description: `Before "${firstTreeNode.name}"`,
+        beforeId: firstTreeNode.id,
+      });
+
+      for (const [childIndex, treeNode] of moveContainerChildren.entries()) {
+        const nextTreeNode = moveContainerChildren[childIndex + 1];
+
+        moveDestinationQuickPickItems.push({
+          label: nextTreeNode
+            ? `$(arrow-down) After "${treeNode.name}"`
+            : `$(arrow-down) Last in ${pendingMoveContainer.name}`,
+          description: nextTreeNode
+            ? `In ${pendingMoveContainer.name}, before "${nextTreeNode.name}"`
+            : `After "${treeNode.name}"`,
+          afterId: treeNode.id,
+        });
+      }
     }
 
-    if (pendingTreeNode.treeNode.kind === "group") {
-      pendingTreeNodes.unshift(
-        ...pendingTreeNode.treeNode.children
-        .map((treeNode) => ({
-          treeNode,
-          depth: pendingTreeNode.depth + 1,
-        })),
-      );
+    for (const treeNode of moveContainerChildren) {
+      if (treeNode.kind !== "group") continue;
+
+      pendingMoveContainers.push({
+        children: treeNode.children,
+        name: `${pendingMoveContainer.name} / "${treeNode.name}"`,
+        parentId: treeNode.id,
+      });
     }
   }
 
   return moveDestinationQuickPickItems;
-}
-
-function getTreeNodeContainsId(
-  treeNode: ResolvedTreeNode,
-  nodeId: string,
-): boolean {
-  if (treeNode.id === nodeId) return true;
-  if (treeNode.kind !== "group") return false;
-
-  return treeNode.children.some((childTreeNode) =>
-    getTreeNodeContainsId(childTreeNode, nodeId),
-  );
 }
 
 function getTerminalNodeIds(treeNode: ResolvedTreeNode): string[] {

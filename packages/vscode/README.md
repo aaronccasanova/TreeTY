@@ -8,7 +8,7 @@ TreeTY shows the global root first as a stable anchor, followed by an explicit r
 
 Select a local root, global root, or group before using the title-bar controls. `+` creates a terminal, and `new folder` creates a group at the selected location. The same actions are available inline and from each root or group's context menu. Each create prompt confirms its destination. Select a terminal leaf to create or reveal its native terminal. Use its inline controls to open, restart, stop, or delete it. Stopping closes the native terminal but preserves the tree entry; deleting removes the entry after confirmation. Use Configure Node from a group or terminal context menu to edit its working directory, project directory, environment, metadata, or restart policy.
 
-Move offers append-to-root, append-to-group, before-sibling, and after-sibling placement. Configuration watchers reconcile only the changed tree and preserve matching live sessions. Changes to launch settings apply to the next terminal launch.
+Move opens one searchable picker of exact insertion points, such as first in a group, after a named sibling, or last at a root. The same flow moves terminals and groups without adding inline movement controls. Configuration watchers reconcile only the changed tree and preserve matching live sessions. Changes to launch settings apply to the next terminal launch.
 
 Durable attention from `.treety/state.json` appears as a small `!` file decoration without replacing the lifecycle icon or description. The decoration propagates to ancestor groups and clears when the terminal is opened or revealed.
 

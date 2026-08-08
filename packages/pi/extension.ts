@@ -3,7 +3,35 @@ const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
 const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
 const treeTYNodeMetadataEnvironmentName = "TREETY_NODE_METADATA";
 
-module.exports = function registerTreeTYExtension(extensionAPI) {
+interface PiCommandContext {
+  ui: {
+    notify(message: string, level: "info"): void;
+  };
+}
+
+interface PiCommand {
+  description: string;
+  handler(commandArguments: string, commandContext: PiCommandContext): Promise<void>;
+}
+
+interface PiCommandResult {
+  code: number;
+  stderr: string;
+  stdout: string;
+}
+
+interface PiExtensionAPI {
+  exec(command: string, commandArguments: string[]): Promise<PiCommandResult>;
+  on(
+    eventName: "agent_settled" | "agent_start",
+    eventHandler: () => Promise<void>,
+  ): void;
+  registerCommand(commandName: string, command: PiCommand): void;
+}
+
+export default function registerTreeTYExtension(
+  extensionAPI: PiExtensionAPI,
+): void {
   let attentionSignalingEnabled = getSessionIsLinked(process.env);
 
   extensionAPI.registerCommand("treety-setup", {
@@ -44,16 +72,16 @@ module.exports = function registerTreeTYExtension(extensionAPI) {
 
     await runTreeTYCommand(extensionAPI, ["attention", "set"]);
   });
-};
+}
 
-function getRequiredSetupEnvironment(environment) {
+export function getRequiredSetupEnvironment(
+  environment: NodeJS.ProcessEnv,
+): string {
   if (
     !environment[treeTYConfigFileEnvironmentName] ||
     !environment[treeTYNodeIdEnvironmentName]
   ) {
-    throw new Error(
-      "/treety-setup must run inside a TreeTY terminal.",
-    );
+    throw new Error("/treety-setup must run inside a TreeTY terminal.");
   }
 
   const piSessionId = environment[piSessionIdEnvironmentName];
@@ -65,7 +93,7 @@ function getRequiredSetupEnvironment(environment) {
   return piSessionId;
 }
 
-function getSessionIsLinked(environment) {
+export function getSessionIsLinked(environment: NodeJS.ProcessEnv): boolean {
   const piSessionId = environment[piSessionIdEnvironmentName];
   const treeTYNodeMetadataContent =
     environment[treeTYNodeMetadataEnvironmentName];
@@ -73,19 +101,28 @@ function getSessionIsLinked(environment) {
   if (!piSessionId || !treeTYNodeMetadataContent) return false;
 
   try {
-    const treeTYNodeMetadata = JSON.parse(treeTYNodeMetadataContent);
+    const treeTYNodeMetadata = JSON.parse(treeTYNodeMetadataContent) as unknown;
 
-    return (
-      typeof treeTYNodeMetadata === "object" &&
-      treeTYNodeMetadata !== null &&
-      treeTYNodeMetadata.integrations?.pi?.sessionId === piSessionId
-    );
+    if (!getValueIsRecord(treeTYNodeMetadata)) return false;
+
+    const integrations = treeTYNodeMetadata["integrations"];
+
+    if (!getValueIsRecord(integrations)) return false;
+
+    const piIntegration = integrations["pi"];
+
+    if (!getValueIsRecord(piIntegration)) return false;
+
+    return piIntegration["sessionId"] === piSessionId;
   } catch {
     return false;
   }
 }
 
-async function runTreeTYCommand(extensionAPI, treeTYArguments) {
+async function runTreeTYCommand(
+  extensionAPI: PiExtensionAPI,
+  treeTYArguments: string[],
+): Promise<void> {
   const treeTYCommandResult = await extensionAPI.exec(
     "treety",
     treeTYArguments,
@@ -101,5 +138,6 @@ async function runTreeTYCommand(extensionAPI, treeTYArguments) {
   throw new Error(errorMessage);
 }
 
-module.exports.getRequiredSetupEnvironment = getRequiredSetupEnvironment;
-module.exports.getSessionIsLinked = getSessionIsLinked;
+function getValueIsRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}

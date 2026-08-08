@@ -91,7 +91,7 @@
       },
       {
         "command": "treety.moveNode",
-        "title": "TreeTY: Move",
+        "title": "TreeTY: Move...",
         "icon": "$(type-hierarchy-sub)"
       },
       {

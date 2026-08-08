@@ -1,13 +1,28 @@
-const assert = require("node:assert/strict");
-const test = require("node:test");
+import * as assert from "node:assert/strict";
+import * as test from "node:test";
 
-const registerTreeTYExtension = require("./treety");
+import registerTreeTYExtension, {
+  getRequiredSetupEnvironment,
+} from "./extension";
 
-test("sets up session resume and enables lifecycle attention", async () => {
+type PiEventName = "agent_settled" | "agent_start";
+
+interface RegisteredCommand {
+  handler(
+    commandArguments: string,
+    commandContext: {
+      ui: {
+        notify(message: string, level: "info"): void;
+      };
+    },
+  ): Promise<void>;
+}
+
+test.test("sets up session resume and enables lifecycle attention", async () => {
   const previousEnvironment = { ...process.env };
-  const registeredEventHandlers = new Map();
-  const treeTYCommands = [];
-  let registeredCommand;
+  const registeredEventHandlers = new Map<PiEventName, () => Promise<void>>();
+  const treeTYCommands: string[][] = [];
+  let registeredCommand: RegisteredCommand | undefined;
 
   process.env.PI_SESSION_ID = "pi-session-123";
   process.env.TREETY_CONFIG_FILE = "/workspace/.treety/tree.json";
@@ -29,15 +44,17 @@ test("sets up session resume and enables lifecycle attention", async () => {
       },
     });
 
-    const notifications = [];
+    const notifications: string[] = [];
+
+    assert.ok(registeredCommand);
 
     await registeredCommand.handler("", {
       ui: {
         notify: (message) => notifications.push(message),
       },
     });
-    await registeredEventHandlers.get("agent_start")();
-    await registeredEventHandlers.get("agent_settled")();
+    await registeredEventHandlers.get("agent_start")?.();
+    await registeredEventHandlers.get("agent_settled")?.();
 
     assert.deepEqual(treeTYCommands, [
       [
@@ -64,10 +81,10 @@ test("sets up session resume and enables lifecycle attention", async () => {
   }
 });
 
-test("enables lifecycle signaling for an already linked session", async () => {
+test.test("enables lifecycle signaling for an already linked session", async () => {
   const previousEnvironment = { ...process.env };
-  const registeredEventHandlers = new Map();
-  const treeTYCommands = [];
+  const registeredEventHandlers = new Map<PiEventName, () => Promise<void>>();
+  const treeTYCommands: string[][] = [];
 
   process.env.PI_SESSION_ID = "pi-session-456";
   process.env.TREETY_CONFIG_FILE = "/workspace/.treety/tree.json";
@@ -93,8 +110,8 @@ test("enables lifecycle signaling for an already linked session", async () => {
       registerCommand: () => undefined,
     });
 
-    await registeredEventHandlers.get("agent_start")();
-    await registeredEventHandlers.get("agent_settled")();
+    await registeredEventHandlers.get("agent_start")?.();
+    await registeredEventHandlers.get("agent_settled")?.();
 
     assert.deepEqual(treeTYCommands, [
       ["treety", "attention", "clear"],
@@ -105,10 +122,10 @@ test("enables lifecycle signaling for an already linked session", async () => {
   }
 });
 
-test("rejects setup outside a TreeTY terminal", () => {
+test.test("rejects setup outside a TreeTY terminal", () => {
   assert.throws(
     () =>
-      registerTreeTYExtension.getRequiredSetupEnvironment({
+      getRequiredSetupEnvironment({
         PI_SESSION_ID: "pi-session-789",
       }),
     /inside a TreeTY terminal/,
