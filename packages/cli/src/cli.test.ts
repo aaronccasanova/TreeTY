@@ -32,6 +32,7 @@ test.test("manages a complete local tree lifecycle", async () => {
   const capturedOutput = createCapturedOutput();
   const runCliOptions = {
     currentDirPath: temporaryDirPath,
+    environment: {},
     homeDirPath: temporaryDirPath,
     output: capturedOutput.output,
   };
