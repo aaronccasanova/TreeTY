@@ -10,9 +10,6 @@
   "pi": {
     "extensions": [
       "packages/pi/src/extension.ts"
-    ],
-    "skills": [
-      "skills"
     ]
   },
   "packageManager": "pnpm@11.9.0",
