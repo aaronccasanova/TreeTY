@@ -5,6 +5,7 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
+  getAffectedTreeNodeAttentionIds,
   getTreeStateFilePath,
   getTreeNode,
   loadTreeStateFile,
@@ -36,6 +37,7 @@ import type {
   ConfiguredWorkspaceModel,
   TreeConfigSource,
   WorkspaceModel,
+  WorkspaceModelChange,
   WorkspaceModelSource,
 } from "./workspace-model";
 
@@ -115,7 +117,8 @@ const configFileName = "tree.json";
 const stateFileName = "state.json";
 
 export class TreeTYController implements WorkspaceModelSource, vscode.Disposable {
-  private readonly workspaceModelChangeEmitter = new vscode.EventEmitter<void>();
+  private readonly workspaceModelChangeEmitter =
+    new vscode.EventEmitter<WorkspaceModelChange>();
 
   private readonly globalConfigFileUri = getGlobalConfigFileUri();
 
@@ -170,7 +173,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
             "treety.showStatusDescriptions",
           )
         ) {
-          this.workspaceModelChangeEmitter.fire();
+          this.workspaceModelChangeEmitter.fire({ kind: "tree" });
         }
 
         if (
@@ -418,6 +421,19 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         nodeTreeEntry.workspaceModel,
         nodeTreeEntry.treeNode.id,
       );
+      const terminalNeedsAttention = Boolean(
+        nodeTreeEntry.workspaceModel.treeState.nodes[
+          nodeTreeEntry.treeNode.id
+        ],
+      );
+
+      nodeActionQuickPickItems.push({
+        execute: () =>
+          this.setTerminalAttention(nodeTreeEntry, !terminalNeedsAttention),
+        label: terminalNeedsAttention
+          ? "$(bell-slash) Clear attention"
+          : "$(bell) Mark needs attention",
+      });
 
       nodeActionQuickPickItems.push({
         execute: () => this.restartTerminal(nodeTreeEntry),
@@ -494,7 +510,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public async openTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
-    await this.clearTerminalAttention(nodeTreeEntry);
+    await this.setTerminalAttention(nodeTreeEntry, false);
     await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
       nodeTreeEntry.treeNode.id,
     );
@@ -504,11 +520,36 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
-    await this.clearTerminalAttention(nodeTreeEntry);
+    await this.setTerminalAttention(nodeTreeEntry, false);
     await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
       nodeTreeEntry.treeNode.id,
     );
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+  }
+
+  public async setTerminalAttention(
+    nodeTreeEntry: NodeTreeEntry,
+    needsAttention: boolean,
+  ): Promise<void> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+
+    const terminalNeedsAttention = Boolean(
+      nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id],
+    );
+
+    if (terminalNeedsAttention === needsAttention) return;
+
+    await setTreeNodeAttention(
+      nodeTreeEntry.workspaceModel.configFileUri.fsPath,
+      nodeTreeEntry.treeNode.id,
+      needsAttention,
+    );
+    await this.queueWorkspaceOperation(() =>
+      this.reconcileWorkspace(
+        nodeTreeEntry.workspaceModel.stateFileUri,
+        "state",
+      ),
+    );
   }
 
   public async addNodeDirectoryToWorkspace(
@@ -645,6 +686,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       return;
     }
 
+    const previousTreeState = workspaceModel.treeState;
     const treeConfig =
       changedFileKind === "config"
         ? parseTreeConfigContent(
@@ -670,7 +712,25 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     workspaceModel.treeState = treeState;
     workspaceModel.resolvedTreeConfig = resolvedTreeConfig;
 
-    this.workspaceModelChangeEmitter.fire();
+    if (changedFileKind === "config") {
+      this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
+
+      return;
+    }
+
+    const affectedAttentionNodeIds = getAffectedTreeNodeAttentionIds(
+      resolvedTreeConfig.tree,
+      previousTreeState,
+      treeState,
+    );
+
+    if (affectedAttentionNodeIds.length === 0) return;
+
+    this.workspaceModelChangeEmitter.fire({
+      kind: "attention",
+      workspaceId: workspaceModel.id,
+      nodeIds: affectedAttentionNodeIds,
+    });
   }
 
   private async reloadWorkspaceModel(
@@ -709,7 +769,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     this.workspaceModels[workspaceModelIndex] = nextWorkspaceModel;
-    this.workspaceModelChangeEmitter.fire();
+    this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
   }
 
   private async reloadWorkspaces(): Promise<void> {
@@ -741,7 +801,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       }
     }
 
-    this.workspaceModelChangeEmitter.fire();
+    this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
   }
 
   private async loadWorkspaceModel(
@@ -789,7 +849,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         vscodeTerminalHost,
       );
 
-      treeTYEngine.subscribe(() => this.workspaceModelChangeEmitter.fire());
+      treeTYEngine.subscribe((terminalSessionState) =>
+        this.workspaceModelChangeEmitter.fire({
+          kind: "terminal",
+          workspaceId: workspaceModelLocation.id,
+          nodeIds: [terminalSessionState.nodeId],
+        }),
+      );
       await treeTYEngine.start();
 
       return {
@@ -882,22 +948,6 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
     await this.queueWorkspaceOperation(() =>
       this.reconcileWorkspace(workspaceModel.configFileUri, "config"),
-    );
-  }
-
-  private async clearTerminalAttention(
-    nodeTreeEntry: NodeTreeEntry,
-  ): Promise<void> {
-    await setTreeNodeAttention(
-      nodeTreeEntry.workspaceModel.configFileUri.fsPath,
-      nodeTreeEntry.treeNode.id,
-      false,
-    );
-    await this.queueWorkspaceOperation(() =>
-      this.reconcileWorkspace(
-        nodeTreeEntry.workspaceModel.stateFileUri,
-        "state",
-      ),
     );
   }
 

@@ -2,7 +2,7 @@
   "name": "treety",
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "TreeTY",
   "preview": true,
   "icon": "media/treety.png",
@@ -132,6 +132,18 @@
         "title": "Stop Terminal",
         "category": "TreeTY",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "treety.markTerminalAttention",
+        "title": "Mark needs attention",
+        "category": "TreeTY",
+        "icon": "$(bell)"
+      },
+      {
+        "command": "treety.clearTerminalAttention",
+        "title": "Clear attention",
+        "category": "TreeTY",
+        "icon": "$(bell-slash)"
       },
       {
         "command": "treety.addDirectoryToWorkspace",
@@ -307,14 +319,24 @@
           "group": "modification@3"
         },
         {
-          "command": "treety.restartTerminal",
-          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "command": "treety.markTerminalAttention",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\.[^.]+\\.clearAttention$/",
           "group": "session@1"
         },
         {
-          "command": "treety.stopTerminal",
-          "when": "view == treety.terminals && (viewItem == treetyTerminal.idle || viewItem == treetyTerminal.running || viewItem == treetyTerminal.starting)",
+          "command": "treety.clearTerminalAttention",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\.[^.]+\\.needsAttention$/",
+          "group": "session@1"
+        },
+        {
+          "command": "treety.restartTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "session@2"
+        },
+        {
+          "command": "treety.stopTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\.(idle|running|starting)\\./",
+          "group": "session@3"
         },
         {
           "command": "treety.deleteNode",
@@ -338,6 +360,14 @@
         },
         {
           "command": "treety.stopTerminal",
+          "when": "false"
+        },
+        {
+          "command": "treety.markTerminalAttention",
+          "when": "false"
+        },
+        {
+          "command": "treety.clearTerminalAttention",
           "when": "false"
         },
         {

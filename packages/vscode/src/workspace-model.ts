@@ -44,8 +44,14 @@ export type WorkspaceModel =
   | UnconfiguredWorkspaceModel
   | InvalidWorkspaceModel;
 
+export type WorkspaceModelChange =
+  | { kind: "attention"; workspaceId: string; nodeIds: readonly string[] }
+  | { kind: "terminal"; workspaceId: string; nodeIds: readonly string[] }
+  | { kind: "tree" }
+  | { kind: "workspace" };
+
 export interface WorkspaceModelSource {
-  readonly onDidChangeWorkspaceModels: vscode.Event<void>;
+  readonly onDidChangeWorkspaceModels: vscode.Event<WorkspaceModelChange>;
   getWorkspaceModels(): readonly WorkspaceModel[];
   getTerminalSessionState(
     workspaceModel: ConfiguredWorkspaceModel,

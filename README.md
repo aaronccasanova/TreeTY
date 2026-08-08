@@ -198,7 +198,7 @@ Terminal rows open or reveal their native terminal when selected. Hover controls
 
 Move uses a searchable, collapsible representation of the tree with inline controls on each destination. The tree starts fully expanded, and its top-right controls expand or collapse everything. Insert above or below any node, or move inside a root or group. The editor stays to one row per node and supports terminals, whole groups, and cross-group moves. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes; removed leaves close their matching sessions.
 
-Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` adds a small `!` decoration to a terminal and its ancestor groups. Opening or revealing that terminal clears attention.
+Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` or **Mark needs attention** from the terminal's VS Code actions gear or right-click menu adds a small `!` decoration to a terminal and its ancestor groups. Both menus also offer **Clear attention**. Opening or revealing that terminal clears it automatically.
 
 ## Pi integration
 
@@ -229,19 +229,19 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-The core library and CLI are versioned independently from the VS Code extension. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, and `TreeTY.treety@0.1.3`. The private Pi integration starts at `0.0.0` and ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
+The core library and CLI are versioned independently from the VS Code extension. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, and `TreeTY.treety@0.1.4`. The private Pi integration starts at `0.0.0` and ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
 
 ```sh
 pnpm package
 ```
 
-This writes `artifacts/treety-0.1.3.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+This writes `artifacts/treety-0.1.4.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-0.1.3-snapshot.20260807T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+For example, this can create `artifacts/treety-0.1.4-snapshot.20260808T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
 
 Build and force-install a fresh snapshot in one step with:
 
