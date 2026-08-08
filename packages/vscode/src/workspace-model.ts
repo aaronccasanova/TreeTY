@@ -1,9 +1,9 @@
-import {
+import { TreeTYEngine } from "@treety/core";
+import type {
   ResolvedTreeConfig,
   TerminalSessionState,
   TreeConfig,
   TreeState,
-  TreeTYEngine,
 } from "@treety/core";
 import * as vscode from "vscode";
 

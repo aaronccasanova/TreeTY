@@ -7,30 +7,32 @@ import {
   createEmptyTreeConfig,
   getTreeStateFilePath,
   getTreeNode,
-  JsonValue,
   loadTreeStateFile,
-  MoveTreeNodeOptions,
   moveTreeNode,
   mutateTreeConfigFile,
   parseTreeConfigContent,
   removeTreeNode,
   renameTreeNode,
   resolveTreeConfig,
-  ResolvedTreeNode,
   setTreeNodeAttention,
-  TerminalSessionState,
-  TreeConfig,
-  TreeNodeConfig,
   TreeTYEngine,
-  UpdateTreeNodeOptions,
   updateTreeNode,
   writeTreeConfigFile,
 } from "@treety/core";
+import type {
+  JsonValue,
+  MoveTreeNodeOptions,
+  ResolvedTreeNode,
+  TerminalSessionState,
+  TreeConfig,
+  TreeNodeConfig,
+  UpdateTreeNodeOptions,
+} from "@treety/core";
 import * as vscode from "vscode";
 
-import { NodeTreeEntry, TreeEntry } from "./tree-provider";
+import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 import { VscodeTerminalHost } from "./vscode-terminal-host";
-import {
+import type {
   ConfiguredWorkspaceModel,
   TreeConfigSource,
   WorkspaceModel,

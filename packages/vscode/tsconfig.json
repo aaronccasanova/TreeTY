@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "module": "Preserve",
     "noEmit": true,
     "rootDir": "src",
     "types": [
@@ -9,6 +10,6 @@
     ]
   },
   "include": [
-    "src/**/*.ts"
+    "src"
   ]
 }

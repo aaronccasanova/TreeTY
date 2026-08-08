@@ -10,4 +10,4 @@ pi install git:github.com/aaronccasanova/TreeTY
 
 Run `/treety-setup` from Pi inside a TreeTY terminal. The command records the current `PI_SESSION_ID`, configures the terminal to resume it with `pi --session <session-id>`, and enables lifecycle attention signaling.
 
-The extension uses small local interfaces for the Pi APIs it calls. Pi executes `extension.ts` directly, while the package's build and test scripts compile it only for static validation and isolated tests.
+The extension uses small local interfaces for the Pi APIs it calls. Pi executes `src/extension.ts` directly, while the package's build and test scripts compile it only for static validation and isolated tests.

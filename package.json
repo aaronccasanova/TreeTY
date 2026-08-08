@@ -9,7 +9,7 @@
   ],
   "pi": {
     "extensions": [
-      "packages/pi/extension.ts"
+      "packages/pi/src/extension.ts"
     ],
     "skills": [
       "skills"
