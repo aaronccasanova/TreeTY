@@ -3,7 +3,11 @@ import * as test from "node:test";
 
 import registerTreeTYExtension, { assertTreeTYEnvironment } from "./extension";
 
-type PiEventName = "agent_settled" | "agent_start" | "session_start";
+type PiEventName =
+  | "agent_settled"
+  | "agent_start"
+  | "session_compact"
+  | "session_start";
 
 interface PiExtensionContext {
   cwd: string;
@@ -152,6 +156,56 @@ test.test("enables lifecycle signaling for an already linked session", async () 
       ["treety", "attention", "clear"],
       ["treety", "attention", "set"],
     ]);
+  } finally {
+    process.env = previousEnvironment;
+  }
+});
+
+test.test("sets attention after compaction for a linked session", async () => {
+  const previousEnvironment = { ...process.env };
+  const registeredEventHandlers = new Map<PiEventName, PiEventHandler>();
+  const treeTYCommands: string[][] = [];
+
+  process.env.TREETY_CONFIG_FILE = "/workspace/.treety/tree.json";
+  process.env.TREETY_NODE_ID = "shell";
+  process.env.TREETY_NODE_METADATA = JSON.stringify({
+    integrations: {
+      pi: {
+        sessionId: "pi-session-compact",
+      },
+    },
+  });
+
+  try {
+    registerTreeTYExtension({
+      exec: async (command, commandArguments) => {
+        treeTYCommands.push([command, ...commandArguments]);
+
+        return { code: 0, stderr: "", stdout: "" };
+      },
+      on: (eventName, eventHandler) => {
+        registeredEventHandlers.set(eventName, eventHandler);
+      },
+      registerCommand: () => undefined,
+    });
+
+    const extensionContext = {
+      cwd: "/workspace",
+      sessionManager: {
+        getSessionId: () => "pi-session-compact",
+      },
+    };
+
+    await registeredEventHandlers.get("session_start")?.(
+      { reason: "startup", type: "session_start" },
+      extensionContext,
+    );
+    await registeredEventHandlers.get("session_compact")?.(
+      { type: "session_compact" },
+      extensionContext,
+    );
+
+    assert.deepEqual(treeTYCommands, [["treety", "attention", "set"]]);
   } finally {
     process.env = previousEnvironment;
   }
