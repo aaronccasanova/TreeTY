@@ -229,7 +229,7 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-The core library, CLI, Pi package, and VS Code extension are versioned independently. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, the Pi Git package at `0.0.2`, and `TreeTY.treety@0.1.5`. The private Pi integration ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
+The core library, CLI, Pi integration, and VS Code extension are versioned independently. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, `@treety/pi@0.0.2`, and `TreeTY.treety@0.1.5`. The private Pi integration ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
 
 ```sh
 pnpm package

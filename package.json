@@ -1,6 +1,5 @@
 {
   "name": "treety-workspace",
-  "version": "0.0.2",
   "private": true,
   "description": "A hierarchical terminal workspace for VS Code and future hosts.",
   "license": "MIT",
