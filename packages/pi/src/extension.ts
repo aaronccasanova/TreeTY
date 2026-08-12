@@ -33,7 +33,11 @@ interface PiSessionStartEvent {
   type: "session_start";
 }
 
-type PiEventName = "agent_settled" | "agent_start" | "session_start";
+type PiEventName =
+  | "agent_settled"
+  | "agent_start"
+  | "session_compact"
+  | "session_start";
 
 interface PiExtensionAPI {
   exec(command: string, commandArguments: string[]): Promise<PiCommandResult>;
@@ -119,6 +123,12 @@ export default function registerTreeTYExtension(
   });
 
   extensionAPI.on("agent_settled", async () => {
+    if (!attentionSignalingEnabled) return;
+
+    await runTreeTYCommand(extensionAPI, ["attention", "set"]);
+  });
+
+  extensionAPI.on("session_compact", async () => {
     if (!attentionSignalingEnabled) return;
 
     await runTreeTYCommand(extensionAPI, ["attention", "set"]);
