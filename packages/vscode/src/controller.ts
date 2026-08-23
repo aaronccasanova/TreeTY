@@ -1471,6 +1471,15 @@ async function showMoveTreeEditor(
 
   refreshMoveTreeQuickPickItems();
 
+  const movingTreeQuickPickItem = moveTreeQuickPick.items.find(
+    (moveTreeQuickPickItem) =>
+      moveTreeQuickPickItem.treeNode?.id === nodeTreeEntry.treeNode.id,
+  );
+
+  if (movingTreeQuickPickItem) {
+    moveTreeQuickPick.activeItems = [movingTreeQuickPickItem];
+  }
+
   return new Promise((resolve) => {
     const resolveMoveTreeEditor = (
       moveTreeNodeOptions?: MoveTreeNodeOptions,

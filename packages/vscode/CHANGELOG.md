@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6 - 2026-08-23
+
+- Focus the moving terminal or group when opening the Move editor so it is immediately in view.
+
 ## 0.1.5 - 2026-08-08
 
 - Capture Pi's current working directory during `/treety-setup` so resumed sessions restart from the same directory.
