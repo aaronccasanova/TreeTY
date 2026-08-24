@@ -19,7 +19,7 @@ Changes that affect only tests, tooling, or documentation do not need a changese
 1. Merge delivery pull requests into `main`.
 2. The `Release` workflow creates or updates a `Version Packages` pull request with version, dependency-range, and changelog changes.
 3. Review and merge that release pull request.
-4. The same workflow validates the release, publishes `@treety/core` and `@treety/cli` through npm trusted publishing in dependency-aware order, then packages and publishes the versioned pre-release VSIX for `TreeTY.treety`.
+4. The same workflow verifies the release, publishes `@treety/core` and `@treety/cli` through npm trusted publishing in dependency-aware order, then publishes the versioned pre-release VSIX for `TreeTY.treety`.
 
 The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Do not create a second release PR or manually change the generated versions.
 
@@ -45,7 +45,7 @@ Trusted publishing requires the GitHub-hosted runner and the workflow's `id-toke
 
 ### VS Code Marketplace
 
-Create a GitHub environment named `release`, add required reviewers if you want a confirmation gate, and add a `VSCE_PAT` environment secret. Create that Personal Access Token under the Microsoft account that owns the `TreeTY` publisher, with the Marketplace `Manage` scope. `vsce` reads `VSCE_PAT` automatically during the final publish step.
+Create a GitHub environment named `release` and add a `VSCE_PAT` environment secret. Leave required reviewers disabled: this workflow uses the environment to both create the Version Packages PR and publish a release, so reviewers would pause both operations. Review and merge the Version Packages PR as the release approval gate. Create that Personal Access Token under the Microsoft account that owns the `TreeTY` publisher, with the Marketplace `Manage` scope. `vsce` reads `VSCE_PAT` automatically during the final publish step.
 
 The Marketplace currently uses PAT authentication for this workflow. When TreeTY's publisher is migrated to Microsoft Entra ID, replace this secret-backed step with `vsce --azure-credential`.
 
@@ -55,10 +55,10 @@ In repository settings, allow GitHub Actions to create and approve pull requests
 
 ## Local checks
 
-Run the complete release validation and artifact build without publishing:
+Run the complete release verification and VSIX artifact build without publishing:
 
 ```sh
-pnpm release:prepare
+pnpm release:verify
 ```
 
 To inspect the exact pending release plan locally:
