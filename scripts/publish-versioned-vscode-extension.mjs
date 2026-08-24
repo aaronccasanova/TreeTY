@@ -22,21 +22,29 @@ function main() {
 }
 
 function hasVersionedVscodeExtension() {
-  const gitDiffResult = childProcess.spawnSync(
+  const previousVscodeExtensionVersion = getVscodeExtensionVersion("HEAD^");
+  const currentVscodeExtensionVersion = getVscodeExtensionVersion("HEAD");
+
+  return previousVscodeExtensionVersion !== currentVscodeExtensionVersion;
+}
+
+function getVscodeExtensionVersion(gitRevision) {
+  const extensionPackageConfigContent = childProcess.execFileSync(
     "git",
-    ["diff", "--quiet", "HEAD^", "HEAD", "--", "packages/vscode/package.json"],
+    ["show", `${gitRevision}:packages/vscode/package.json`],
     {
       cwd: projectRootDirPath,
-      stdio: "inherit",
+      encoding: "utf8",
     },
   );
+  const extensionPackageConfig = JSON.parse(extensionPackageConfigContent);
 
-  if (gitDiffResult.error) throw gitDiffResult.error;
-  if (gitDiffResult.status === 0) return false;
-  if (gitDiffResult.status === 1) return true;
+  if (typeof extensionPackageConfig.version === "string") {
+    return extensionPackageConfig.version;
+  }
 
   throw new Error(
-    "Could not determine whether the VS Code extension version changed. The release checkout must include HEAD and HEAD^.",
+    `Could not read the VS Code extension version at ${gitRevision}. The release checkout must include HEAD and HEAD^.`,
   );
 }
 
