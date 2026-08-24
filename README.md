@@ -41,9 +41,9 @@ packages/pi
   minimal local Pi API types with no Pi runtime dependency
 
 packages/codex
-  Private Codex plugin package
+  Codex plugin package
   session resume setup and lifecycle attention signaling
-  dependency-free lifecycle hook and setup skill
+  dependency-free lifecycle hook and setup command
 
 packages/vscode
   TreeDataProvider adapter
@@ -223,7 +223,14 @@ Run `/treety-setup` inside a TreeTY terminal. The TypeScript extension in `packa
 
 ## Codex integration
 
-The private `@treety/codex` workspace package in `packages/codex` is a Codex plugin authored and versioned in this repository. After installing the plugin from a configured marketplace and trusting its hooks, invoke `$treety-setup` inside a TreeTY terminal.
+Add this repository as a Codex marketplace, then install the TreeTY Codex plugin:
+
+```sh
+codex plugin marketplace add aaronccasanova/TreeTY --ref main
+codex plugin add treety-codex@treety
+```
+
+After trusting the plugin hooks, invoke `/treety-setup` inside a TreeTY terminal. The `UserPromptSubmit` hook handles that exact prompt without sending it to the model.
 
 The setup hook stores the current Codex session ID at `/integrations/codex/sessionId`, configures the terminal to start with `codex resume <session-id>`, and captures Codex's current working directory. The plugin clears attention on `UserPromptSubmit` and sets it on `Stop` or `PostCompact`. Each event reads current TreeTY metadata first, so replacing the linked session disables signaling from the old session.
 

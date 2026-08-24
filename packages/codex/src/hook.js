@@ -3,11 +3,7 @@ import * as url from "node:url";
 
 const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
 const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
-const treeTYSetupPrompts = new Set([
-  "$treety-setup",
-  "/treety-setup",
-  "treety-setup",
-]);
+const treeTYSetupPrompt = "/treety-setup";
 
 /**
  * @typedef {{ code: number, stderr: string, stdout: string }} CommandResult
@@ -39,7 +35,7 @@ export function runCodexHook(codexHookInput, options = {}) {
   const runCommand = options.runCommand ?? runCommandSynchronously;
 
   if (codexHookInput.hook_event_name === "UserPromptSubmit") {
-    if (getPromptIsTreeTYSetup(codexHookInput.prompt)) {
+    if (codexHookInput.prompt === treeTYSetupPrompt) {
       return runTreeTYSetup(codexHookInput, environment, runCommand);
     }
 
@@ -111,7 +107,7 @@ function runTreeTYSetup(codexHookInput, environment, runCommand) {
   if (!getEnvironmentIsTreeTY(environment)) {
     return {
       decision: "block",
-      reason: "$treety-setup must run inside a TreeTY terminal.",
+      reason: "/treety-setup must run inside a TreeTY terminal.",
     };
   }
 
@@ -140,17 +136,10 @@ function runTreeTYSetup(codexHookInput, environment, runCommand) {
   }
 
   return {
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext:
-        "TreeTY setup completed. Tell the user that TreeTY will resume this Codex session and signal when it needs attention.",
-    },
+    decision: "block",
+    reason:
+      "TreeTY will resume this Codex session and signal when it needs attention.",
   };
-}
-
-/** @param {string | undefined} prompt */
-function getPromptIsTreeTYSetup(prompt) {
-  return typeof prompt === "string" && treeTYSetupPrompts.has(prompt.trim());
 }
 
 /** @param {NodeJS.ProcessEnv} environment */

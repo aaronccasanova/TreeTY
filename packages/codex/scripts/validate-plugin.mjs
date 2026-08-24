@@ -10,9 +10,18 @@ const pluginConfigFilePath = path.join(
   ".codex-plugin",
   "plugin.json",
 );
+const marketplaceConfigFilePath = path.join(
+  packageDirPath,
+  "..",
+  "..",
+  ".agents",
+  "plugins",
+  "marketplace.json",
+);
 
 const packageConfig = readJsonFile(packageConfigFilePath);
 const pluginConfig = readJsonFile(pluginConfigFilePath);
+const marketplaceConfig = readJsonFile(marketplaceConfigFilePath);
 
 if (packageConfig.version !== pluginConfig.version) {
   throw new Error(
@@ -22,6 +31,26 @@ if (packageConfig.version !== pluginConfig.version) {
 
 if (pluginConfig.name !== "treety-codex") {
   throw new Error('Codex plugin name must be "treety-codex".');
+}
+
+if (marketplaceConfig.name !== "treety") {
+  throw new Error('Codex marketplace name must be "treety".');
+}
+
+const marketplacePluginConfig = marketplaceConfig.plugins?.[0];
+
+if (marketplacePluginConfig?.name !== pluginConfig.name) {
+  throw new Error("Codex marketplace must contain the TreeTY Codex plugin.");
+}
+
+if (marketplacePluginConfig.source?.source !== "local") {
+  throw new Error("Codex marketplace plugin source must be local.");
+}
+
+if (marketplacePluginConfig.source.path !== "./packages/codex") {
+  throw new Error(
+    'Codex marketplace plugin source path must be "./packages/codex".',
+  );
 }
 
 /** @param {string} jsonFilePath */

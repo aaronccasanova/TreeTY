@@ -10,7 +10,7 @@ Every pull request that changes a shipped package or the VS Code extension must 
 pnpm changeset
 ```
 
-Select every affected package and write the release-note summary. Select `treety` when the VS Code extension changes, and select `@treety/codex` when the Codex plugin changes. Changesets treats both as private packages, which lets it version them and write their changelogs without attempting to publish them to npm.
+Select every affected package and write the release-note summary. Select `treety` when the VS Code extension changes, and select `@treety/codex` when the Codex plugin changes. Both have `private: true` in their package manifests, so Changesets versions them and writes their changelogs without attempting to publish them to npm.
 
 Changes that affect only tests, tooling, or documentation do not need a changeset.
 
@@ -23,7 +23,7 @@ Changes that affect only tests, tooling, or documentation do not need a changese
 
 The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Marketplace publishing skips an already-published extension version, so a retry after a partial Marketplace success is safe. Do not create a second release PR or manually change the generated versions.
 
-Changesets publishes `@treety/core`, `@treety/cli`, and `@treety/pi` to npm. The private VS Code extension is published only to the Marketplace. The private Codex plugin remains a Git artifact for distribution through a separately configured Codex marketplace.
+Changesets publishes `@treety/core`, `@treety/cli`, and `@treety/pi` to npm. The VS Code extension is published to the VS Code Marketplace. The Codex plugin is distributed through this repository's Codex marketplace.
 
 ## One-time setup
 
