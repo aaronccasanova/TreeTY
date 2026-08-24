@@ -23,7 +23,7 @@ Changes that affect only tests, tooling, or documentation do not need a changese
 
 The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Do not create a second release PR or manually change the generated versions.
 
-Changesets publishes public workspace packages only. The private `@treety/pi` package is versioned and changelogged when selected, but remains source-distributed. The private VS Code extension is published only to the Marketplace.
+Changesets publishes `@treety/core`, `@treety/cli`, and `@treety/pi` to npm. The private VS Code extension is published only to the Marketplace.
 
 ## One-time setup
 
@@ -31,7 +31,7 @@ Before merging the first release PR, configure the following external credential
 
 ### npm trusted publishers
 
-For both `@treety/core` and `@treety/cli`, open npm package settings, then add a GitHub Actions trusted publisher with:
+For `@treety/core`, `@treety/cli`, and `@treety/pi`, open npm package settings, then add a GitHub Actions trusted publisher with:
 
 - Organization or user: `aaronccasanova`
 - Repository: `TreeTY`
@@ -40,6 +40,8 @@ For both `@treety/core` and `@treety/cli`, open npm package settings, then add a
 - Allowed action: `npm publish`
 
 Trusted publishing requires the GitHub-hosted runner and the workflow's `id-token: write` permission. It removes the need for an npm token and generates npm provenance automatically. After confirming the first automated publish succeeds, npm recommends enabling `Require two-factor authentication and disallow tokens` for each package.
+
+`@treety/pi` needs one bootstrap publish before npm exposes its package settings. After this PR merges, but before merging its generated `Version Packages` PR, publish the current `@treety/pi@0.0.2` from `main` with an interactive npm login, then configure its trusted publisher. The generated release PR will then publish the first managed `0.1.0` release through OIDC.
 
 ### VS Code Marketplace
 
