@@ -24,6 +24,8 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/codex: {}
+
   packages/core: {}
 
   packages/pi: {}

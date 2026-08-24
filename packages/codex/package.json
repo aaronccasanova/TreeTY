@@ -1,0 +1,26 @@
+{
+  "name": "@treety/codex",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Connect Codex sessions to TreeTY terminal resume and attention state.",
+  "license": "MIT",
+  "keywords": [
+    "codex-plugin",
+    "treety"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aaronccasanova/TreeTY.git",
+    "directory": "packages/codex"
+  },
+  "scripts": {
+    "build": "pnpm run check && pnpm run validate",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test src/*.test.js",
+    "validate": "node scripts/validate-plugin.mjs"
+  },
+  "type": "module"
+}

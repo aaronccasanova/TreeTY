@@ -1,0 +1,45 @@
+{
+  "description": "Synchronize linked Codex sessions with TreeTY attention state.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/src/hook.js\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\src\\hook.js\"",
+            "timeout": 30,
+            "statusMessage": "Synchronizing TreeTY"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/src/hook.js\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\src\\hook.js\"",
+            "timeout": 30,
+            "statusMessage": "Updating TreeTY attention"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/src/hook.js\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\src\\hook.js\"",
+            "timeout": 30,
+            "statusMessage": "Updating TreeTY attention"
+          }
+        ]
+      }
+    ]
+  }
+}
