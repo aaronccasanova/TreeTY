@@ -44,6 +44,6 @@ jobs:
         uses: changesets/action@v2
         with:
           publish-script: pnpm release:publish
-          version-script: pnpm version
+          version-script: pnpm run version
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
