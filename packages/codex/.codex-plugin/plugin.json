@@ -1,6 +1,6 @@
 {
   "name": "treety-codex",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Resume Codex sessions in TreeTY terminals and synchronize attention state.",
   "author": {
     "name": "TreeTY",
