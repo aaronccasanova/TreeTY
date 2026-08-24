@@ -1,0 +1,29 @@
+{
+  "name": "treety-codex",
+  "version": "0.0.0",
+  "description": "Resume Codex sessions in TreeTY terminals and synchronize attention state.",
+  "author": {
+    "name": "TreeTY",
+    "url": "https://github.com/aaronccasanova/TreeTY"
+  },
+  "homepage": "https://github.com/aaronccasanova/TreeTY/tree/main/packages/codex",
+  "repository": "https://github.com/aaronccasanova/TreeTY",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "terminal",
+    "treety"
+  ],
+  "interface": {
+    "displayName": "TreeTY Codex",
+    "shortDescription": "Resume Codex sessions from TreeTY terminals",
+    "longDescription": "Link a Codex session to its TreeTY terminal, resume it automatically, and synchronize durable attention state.",
+    "developerName": "TreeTY",
+    "category": "Developer tools",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/aaronccasanova/TreeTY",
+    "defaultPrompt": []
+  }
+}

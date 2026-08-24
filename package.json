@@ -13,8 +13,8 @@
   },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
-    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter @treety/pi run build && pnpm --filter treety run build",
-    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter @treety/pi run check && pnpm --filter treety run check",
+    "build": "pnpm --filter @treety/core run build && pnpm --filter @treety/cli run build && pnpm --filter @treety/pi run build && pnpm --filter @treety/codex run build && pnpm --filter treety run build",
+    "check": "pnpm --filter @treety/core run check && pnpm --filter @treety/core run build && pnpm --filter @treety/cli run check && pnpm --filter @treety/pi run check && pnpm --filter @treety/codex run check && pnpm --filter @treety/codex run validate && pnpm --filter treety run check",
     "package": "node scripts/package-vscode-extension.mjs",
     "package:pre-release": "node scripts/package-vscode-extension.mjs --pre-release",
     "package:snapshot": "node scripts/package-vscode-extension.mjs --snapshot",
@@ -22,11 +22,11 @@
     "package:cli": "pnpm --filter @treety/cli pack --pack-destination artifacts",
     "package:core": "pnpm --filter @treety/core pack --pack-destination artifacts",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && node scripts/sync-codex-plugin-version.mjs",
     "release:verify": "pnpm test && pnpm package:pre-release",
     "release:publish": "pnpm release:verify && pnpm changeset publish && pnpm release:publish:vscode",
     "release:publish:vscode": "node scripts/publish-versioned-vscode-extension.mjs --pre-release",
-    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test"
+    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test && pnpm --filter @treety/codex run test"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",
