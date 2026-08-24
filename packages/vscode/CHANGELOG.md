@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+### Patch Changes
+
+- 1217f6e: Publish the VS Code extension through the Changesets release flow.
+
 ## 0.1.6 - 2026-08-23
 
 - Focus the moving terminal or group when opening the Move editor so it is immediately in view.
