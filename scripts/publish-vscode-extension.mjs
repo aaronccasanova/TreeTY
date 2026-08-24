@@ -31,7 +31,14 @@ function main() {
 
   runCommand(
     "pnpm",
-    ["exec", "vsce", "publish", "--packagePath", artifactFilePath],
+    [
+      "exec",
+      "vsce",
+      "publish",
+      "--packagePath",
+      artifactFilePath,
+      "--skip-duplicate",
+    ],
     extensionDirPath,
   );
 }
