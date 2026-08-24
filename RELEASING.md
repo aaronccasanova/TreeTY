@@ -19,9 +19,9 @@ Changes that affect only tests, tooling, or documentation do not need a changese
 1. Merge delivery pull requests into `main`.
 2. The `Release` workflow creates or updates a `Version Packages` pull request with version, dependency-range, and changelog changes.
 3. Review and merge that release pull request.
-4. The same workflow verifies the release, publishes `@treety/core` and `@treety/cli` through npm trusted publishing in dependency-aware order, then publishes the versioned pre-release VSIX for `TreeTY.treety`.
+4. The same workflow verifies the release, publishes npm packages through trusted publishing in dependency-aware order, then publishes a pre-release VSIX for `TreeTY.treety` only when the release PR changes the extension version.
 
-The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Do not create a second release PR or manually change the generated versions.
+The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Marketplace publishing skips an already-published extension version, so a retry after a partial Marketplace success is safe. Do not create a second release PR or manually change the generated versions.
 
 Changesets publishes `@treety/core`, `@treety/cli`, and `@treety/pi` to npm. The private VS Code extension is published only to the Marketplace.
 
