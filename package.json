@@ -21,13 +21,15 @@
     "install:snapshot": "node scripts/package-vscode-extension.mjs --snapshot --install",
     "package:cli": "pnpm --filter @treety/cli pack --pack-destination artifacts",
     "package:core": "pnpm --filter @treety/core pack --pack-destination artifacts",
-    "release:prepare": "pnpm check && pnpm test && pnpm build && pnpm package:core && pnpm package:cli && pnpm package:pre-release",
-    "release:publish:core": "pnpm --filter @treety/core publish --access public",
-    "release:publish:cli": "pnpm --filter @treety/cli publish --access public",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release:verify": "pnpm test && pnpm package:pre-release",
+    "release:publish": "pnpm release:verify && pnpm changeset publish && pnpm release:publish:vscode",
     "release:publish:vscode": "node scripts/publish-vscode-extension.mjs --pre-release",
     "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test"
   },
   "devDependencies": {
+    "@changesets/cli": "^3.0.1",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   }

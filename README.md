@@ -36,7 +36,7 @@ packages/cli
   list, inspect, configure, rename, order, metadata, attention, and remove commands
 
 packages/pi
-  TypeScript Pi extension loaded by the repository package manifest
+  Publishable TypeScript Pi extension
   session resume setup and lifecycle attention signaling
   minimal local Pi API types with no Pi runtime dependency
 
@@ -202,7 +202,13 @@ Attention is independent from stopped, starting, idle, running, and failed lifec
 
 ## Pi integration
 
-Install this repository as a Pi package:
+Install the Pi extension from npm:
+
+```sh
+pi install npm:@treety/pi
+```
+
+You can also install this repository as a Pi package:
 
 ```sh
 pi install git:github.com/aaronccasanova/TreeTY
@@ -229,7 +235,7 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-The core library, CLI, Pi integration, and VS Code extension are versioned independently. The current release versions are `@treety/core@0.0.3`, `@treety/cli@0.0.3`, `@treety/pi@0.0.2`, and `TreeTY.treety@0.1.6`. The private Pi integration ships from this Git repository rather than a package registry. Create the stable local VSIX path with:
+The core library, CLI, Pi integration, and VS Code extension are versioned independently. Create the stable local VSIX path with:
 
 ```sh
 pnpm package

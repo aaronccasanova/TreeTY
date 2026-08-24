@@ -1,8 +1,14 @@
 # TreeTY Pi extension
 
-This package links a Pi session to the TreeTY terminal that launched it. It is loaded from the repository's Pi package manifest and does not add Pi as a local dependency.
+This package links a Pi session to the TreeTY terminal that launched it. It does not add Pi as a local dependency.
 
-Install TreeTY as a Pi package:
+Install it from npm:
+
+```sh
+pi install npm:@treety/pi
+```
+
+You can also install the complete TreeTY repository Pi package:
 
 ```sh
 pi install git:github.com/aaronccasanova/TreeTY

@@ -1,11 +1,32 @@
 {
   "name": "@treety/pi",
   "version": "0.0.2",
-  "private": true,
   "description": "Connect Pi sessions to TreeTY terminal resume and attention state.",
   "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "treety"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "files": [
+    "src/extension.ts",
+    "LICENSE",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aaronccasanova/TreeTY.git",
+    "directory": "packages/pi"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

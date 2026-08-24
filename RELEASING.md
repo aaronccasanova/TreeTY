@@ -1,109 +1,68 @@
 # Releasing TreeTY
 
-TreeTY currently uses an explicit local release workflow. Keep the package versions and changelogs in source control, then publish each deliverable in dependency order.
+Releases are automated with Changesets 3 and [the Changesets GitHub Action](https://github.com/changesets/action). A merged delivery change produces or updates a release pull request. Merge that reviewed release PR to publish the npm packages in dependency order and then publish the VS Code Marketplace pre-release.
 
-## Release order
+## Add a changeset
 
-Publish releases in this order:
-
-1. `@treety/core`
-2. `@treety/cli`
-3. `TreeTY.treety`
-
-The CLI depends on the exact workspace version of core. pnpm replaces `workspace:*` with that version when it packs or publishes the CLI. The VS Code extension bundles core, so it does not depend on npm availability at runtime.
-
-The private `@treety/pi` package is not published separately. It ships with the repository through the root Pi package manifest. The private workspace root is not a versioned deliverable and its `package.json` intentionally omits `version`.
-
-## Prepare the release
-
-Update these versions before publishing:
-
-- `packages/core/package.json`
-- `packages/cli/package.json`
-- `packages/pi/package.json`
-- `packages/vscode/package.json`
-
-Only bump deliverables changed by the release. Keep `packages/cli/src/cli.ts`, its version test, the root README, and the VS Code changelog synchronized with the relevant package versions.
-
-Update the relevant package changelogs and documentation in the same commit. Commit and push the release state to `main`, then confirm the worktree is clean and synchronized with `origin/main`.
-
-Run the full validation and packaging pass from the repository root:
+Every pull request that changes a shipped package or the VS Code extension must include a changeset:
 
 ```sh
-pnpm release:prepare
+pnpm changeset
 ```
 
-This command runs type checks, tests, and builds. It also creates the npm tarballs and the Marketplace pre-release VSIX under `artifacts/`. Inspect those artifacts before publishing when a release changes package contents or extension packaging.
+Select every affected package and write the release-note summary. Select `treety` when the VS Code extension changes. Changesets treats the extension as a private package, which lets it version the extension and write `packages/vscode/CHANGELOG.md` without attempting to publish it to npm.
 
-## Publish npm packages
+Changes that affect only tests, tooling, or documentation do not need a changeset.
 
-Publish core first:
+## Merge the release PR
+
+1. Merge delivery pull requests into `main`.
+2. The `Release` workflow creates or updates a `Version Packages` pull request with version, dependency-range, and changelog changes.
+3. Review and merge that release pull request.
+4. The same workflow verifies the release, publishes `@treety/core` and `@treety/cli` through npm trusted publishing in dependency-aware order, then publishes the versioned pre-release VSIX for `TreeTY.treety`.
+
+The workflow is serialized per branch. If npm publishing fails, it never reaches the extension publish step. After resolving the failure, rerun the release workflow from the failed release commit. Do not create a second release PR or manually change the generated versions.
+
+Changesets publishes `@treety/core`, `@treety/cli`, and `@treety/pi` to npm. The private VS Code extension is published only to the Marketplace.
+
+## One-time setup
+
+Before merging the first release PR, configure the following external credentials.
+
+### npm trusted publishers
+
+For `@treety/core`, `@treety/cli`, and `@treety/pi`, open npm package settings, then add a GitHub Actions trusted publisher with:
+
+- Organization or user: `aaronccasanova`
+- Repository: `TreeTY`
+- Workflow filename: `release.yml`
+- Environment name: `release`
+- Allowed action: `npm publish`
+
+Trusted publishing requires the GitHub-hosted runner and the workflow's `id-token: write` permission. It removes the need for an npm token and generates npm provenance automatically. After confirming the first automated publish succeeds, npm recommends enabling `Require two-factor authentication and disallow tokens` for each package.
+
+`@treety/pi` needs one bootstrap publish before npm exposes its package settings. After this PR merges, but before merging its generated `Version Packages` PR, publish the current `@treety/pi@0.0.2` from `main` with an interactive npm login, then configure its trusted publisher. The generated release PR will then publish the first managed `0.1.0` release through OIDC.
+
+### VS Code Marketplace
+
+Create a GitHub environment named `release` and add a `VSCE_PAT` environment secret. Leave required reviewers disabled: this workflow uses the environment to both create the Version Packages PR and publish a release, so reviewers would pause both operations. Review and merge the Version Packages PR as the release approval gate. Create that Personal Access Token under the Microsoft account that owns the `TreeTY` publisher, with the Marketplace `Manage` scope. `vsce` reads `VSCE_PAT` automatically during the final publish step.
+
+The Marketplace currently uses PAT authentication for this workflow. When TreeTY's publisher is migrated to Microsoft Entra ID, replace this secret-backed step with `vsce --azure-credential`.
+
+### GitHub Actions
+
+In repository settings, allow GitHub Actions to create and approve pull requests. The workflow already declares the required `contents`, `pull-requests`, and `id-token` permissions.
+
+## Local checks
+
+Run the complete release verification and VSIX artifact build without publishing:
 
 ```sh
-pnpm release:publish:core
-pnpm view @treety/core@latest version
+pnpm release:verify
 ```
 
-Wait until the new core version is visible, then publish the CLI:
+To inspect the exact pending release plan locally:
 
 ```sh
-pnpm release:publish:cli
-pnpm view @treety/cli@latest version
+pnpm changeset status
 ```
-
-pnpm prompts directly when npm requires a one-time password or web-based authentication. A package version cannot be reused after it has been published, so resume from the failed step instead of rerunning earlier successful steps.
-
-## Publish the VS Code extension
-
-The VS Code Marketplace supports command-line publishing through `vsce`. TreeTY installs `@vscode/vsce` as a local development dependency, so a global `vsce` command is not required.
-
-### Create a Marketplace token
-
-Create the token with the same Microsoft account that owns the `TreeTY` Marketplace publisher:
-
-1. Sign in to the [Azure DevOps portal](https://dev.azure.com/).
-2. Open the user settings menu from your avatar, then select **Personal access tokens**.
-3. Select **New Token**.
-4. Enter a descriptive name such as `TreeTY VS Code publishing`.
-5. Set **Organization** to **All accessible organizations**.
-6. Choose the shortest practical expiration period.
-7. Select **Custom defined** scopes, then select **Show all scopes**.
-8. Under **Marketplace**, enable **Manage**.
-9. Select **Create**, then copy the token immediately. Azure DevOps displays it only once.
-
-See the [official VS Code publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#get-a-personal-access-token) for the current token requirements.
-
-Sign in once with the local `vsce` installation and the `TreeTY` publisher ID:
-
-```sh
-pnpm --dir packages/vscode exec vsce login TreeTY
-```
-
-Paste the token at the `Personal Access Token for publisher 'TreeTY':` prompt, then press Enter. The prompt does not display the pasted value. `vsce login` stores the verified credential for later commands and does not currently use a browser-based developer login. Running the publish command without logging in first produces the same token prompt and can publish immediately.
-
-If `vsce` cannot open the operating system credential store, it warns that it will store the token as clear text in `~/.vsce`. Use a short-lived token in that situation. After publishing, remove the stored publisher credential with:
-
-```sh
-pnpm --dir packages/vscode exec vsce logout TreeTY
-```
-
-Publish the pre-release:
-
-```sh
-pnpm release:publish:vscode
-```
-
-This command publishes the exact pre-release VSIX created by `pnpm release:prepare`. It stops if the expected versioned artifact is missing. Verify the result on the [TreeTY Marketplace listing](https://marketplace.visualstudio.com/items?itemName=TreeTY.treety).
-
-Microsoft plans to retire global Azure DevOps Personal Access Tokens on December 1, 2026. Before automating Marketplace releases, migrate this step to Microsoft Entra ID authentication with `vsce --azure-credential` instead of adding a long-lived PAT to GitHub secrets.
-
-## When to adopt release automation
-
-Keep this workflow while releases are infrequent and version changes remain easy to review. Adopt Changesets or a comparable release tool when coordinated version bumps, generated changelogs, or release pull requests start consuming meaningful time.
-
-Future automation should preserve the same boundaries:
-
-- Use npm trusted publishing from GitHub Actions for `@treety/core` and `@treety/cli`.
-- Publish core before CLI.
-- Use Microsoft Entra ID for the VS Code Marketplace.
-- Publish only from a clean, reviewed commit on `main`.

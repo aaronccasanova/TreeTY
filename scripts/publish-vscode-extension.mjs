@@ -25,7 +25,7 @@ function main() {
 
   if (!fs.existsSync(artifactFilePath)) {
     throw new Error(
-      `Release artifact not found: ${artifactFilePath}\nRun pnpm release:prepare before publishing.`,
+      `Release artifact not found: ${artifactFilePath}\nRun pnpm release:verify before publishing.`,
     );
   }
 
