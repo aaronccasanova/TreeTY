@@ -18,7 +18,7 @@ test.test("sets up session resume without a Codex session environment variable",
     {
       cwd: "/workspace/packages/cli",
       hook_event_name: "UserPromptSubmit",
-      prompt: "/treety-setup",
+      prompt: "$treety-setup",
       session_id: "codex-session-123",
     },
     {
@@ -238,14 +238,14 @@ test.test("rejects setup outside a TreeTY terminal", () => {
 
   assert.deepEqual(hookOutput, {
     decision: "block",
-    reason: "/treety-setup must run inside a TreeTY terminal.",
+    reason: "$treety-setup must run inside a TreeTY terminal.",
   });
 });
 
 test.test("ignores setup prompt aliases", () => {
   const treeTYSetupPromptAliases = [
-    "$treety-setup",
     "treety-setup",
+    " $treety-setup ",
     " /treety-setup ",
   ];
 

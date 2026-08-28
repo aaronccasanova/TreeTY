@@ -3,7 +3,8 @@ import * as url from "node:url";
 
 const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
 const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
-const treeTYSetupPrompt = "/treety-setup";
+const treeTYSetupSkillPrompt = "$treety-setup";
+const treeTYSetupSlashPrompt = "/treety-setup";
 
 /**
  * @typedef {{ code: number, stderr: string, stdout: string }} CommandResult
@@ -35,7 +36,7 @@ export function runCodexHook(codexHookInput, options = {}) {
   const runCommand = options.runCommand ?? runCommandSynchronously;
 
   if (codexHookInput.hook_event_name === "UserPromptSubmit") {
-    if (codexHookInput.prompt === treeTYSetupPrompt) {
+    if (getPromptIsTreeTYSetup(codexHookInput.prompt)) {
       return runTreeTYSetup(codexHookInput, environment, runCommand);
     }
 
@@ -66,6 +67,13 @@ export function runCodexHook(codexHookInput, options = {}) {
   if (codexHookInput.hook_event_name === "Stop") return {};
 
   return undefined;
+}
+
+/** @param {string | undefined} prompt */
+function getPromptIsTreeTYSetup(prompt) {
+  return (
+    prompt === treeTYSetupSkillPrompt || prompt === treeTYSetupSlashPrompt
+  );
 }
 
 /**
@@ -107,7 +115,7 @@ function runTreeTYSetup(codexHookInput, environment, runCommand) {
   if (!getEnvironmentIsTreeTY(environment)) {
     return {
       decision: "block",
-      reason: "/treety-setup must run inside a TreeTY terminal.",
+      reason: "$treety-setup must run inside a TreeTY terminal.",
     };
   }
 
