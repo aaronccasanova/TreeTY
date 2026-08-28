@@ -7,7 +7,7 @@ codex plugin marketplace add aaronccasanova/TreeTY --ref main
 codex plugin add treety-codex@treety
 ```
 
-After trusting the plugin hooks, invoke `/treety-setup` from Codex inside a TreeTY terminal. The `UserPromptSubmit` hook handles that exact prompt without sending it to the model. It records the current Codex session ID, captures Codex's working directory, and configures the terminal to resume with `codex resume <session-id>`.
+After trusting the plugin hooks, select `$treety-codex:treety-setup` from the `$` menu inside a TreeTY terminal. Codex validates slash commands before `UserPromptSubmit`, so the plugin registers a minimal explicit-only skill that the hook intercepts without sending the submission to the model. It records the current Codex session ID, captures Codex's working directory, and configures the terminal to resume with `codex resume <session-id>`.
 
 The plugin clears attention when a linked session receives a prompt. It sets attention when Codex stops or finishes compaction. Every event reads current TreeTY metadata before signaling, so replacing the session in a terminal disables signaling from the old session.
 
