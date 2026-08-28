@@ -398,6 +398,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
           execute: () => this.createGroup(nodeTreeEntry),
           label: "$(new-folder) Create group",
         },
+        {
+          execute: () => this.restartGroupTerminals(nodeTreeEntry),
+          label: "$(debug-restart) Restart terminals",
+        },
       );
     }
 
@@ -525,6 +529,21 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       nodeTreeEntry.treeNode.id,
     );
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+  }
+
+  public async restartGroupTerminals(
+    nodeTreeEntry: NodeTreeEntry,
+  ): Promise<void> {
+    if (nodeTreeEntry.treeNode.kind !== "group") return;
+
+    for (const terminalTreePath of getTerminalTreePaths(
+      nodeTreeEntry.treeNode,
+    )) {
+      await this.restartTerminal({
+        ...nodeTreeEntry,
+        treeNode: terminalTreePath.terminalNode,
+      });
+    }
   }
 
   public async setTerminalAttention(

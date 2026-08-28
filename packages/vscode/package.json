@@ -135,6 +135,12 @@
         "icon": "$(debug-restart)"
       },
       {
+        "command": "treety.restartGroupTerminals",
+        "title": "Restart Terminals",
+        "category": "TreeTY",
+        "icon": "$(debug-restart)"
+      },
+      {
         "command": "treety.stopTerminal",
         "title": "Stop Terminal",
         "category": "TreeTY",
@@ -346,6 +352,11 @@
           "group": "session@2"
         },
         {
+          "command": "treety.restartGroupTerminals",
+          "when": "view == treety.terminals && viewItem == treetyGroup",
+          "group": "session@2"
+        },
+        {
           "command": "treety.stopTerminal",
           "when": "view == treety.terminals && viewItem =~ /^treetyTerminal\\.(idle|running|starting)\\./",
           "group": "session@3"
@@ -368,6 +379,10 @@
         },
         {
           "command": "treety.restartTerminal",
+          "when": "false"
+        },
+        {
+          "command": "treety.restartGroupTerminals",
           "when": "false"
         },
         {

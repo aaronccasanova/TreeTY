@@ -84,6 +84,11 @@ export async function activate(
         treeTYController.restartTerminal(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.restartGroupTerminals",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.restartGroupTerminals(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
       "treety.stopTerminal",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.stopTerminal(nodeTreeEntry),
