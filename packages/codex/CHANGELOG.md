@@ -1,5 +1,11 @@
 # @treety/codex
 
+## 0.1.1
+
+### Patch Changes
+
+- feece2c: Register `$treety-codex:treety-setup` as an explicit Codex skill and intercept it before model processing.
+
 ## 0.1.0
 
 ### Minor Changes
