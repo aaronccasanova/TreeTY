@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8
+
+### Patch Changes
+
+- 407035e: Restart every terminal in a group from its actions or context menu.
+
 ## 0.1.7
 
 ### Patch Changes

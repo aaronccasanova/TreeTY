@@ -3,7 +3,7 @@
   "private": true,
   "displayName": "TreeTY",
   "description": "Organize persistent VS Code terminals as a hierarchical workspace tree.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "TreeTY",
   "preview": true,
   "icon": "media/treety.png",
