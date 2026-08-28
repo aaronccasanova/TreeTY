@@ -3,6 +3,7 @@ import * as url from "node:url";
 
 const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
 const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
+const treeTYSetupQualifiedSkillPrompt = "$treety-codex:treety-setup";
 const treeTYSetupSkillPrompt = "$treety-setup";
 const treeTYSetupSlashPrompt = "/treety-setup";
 
@@ -72,7 +73,9 @@ export function runCodexHook(codexHookInput, options = {}) {
 /** @param {string | undefined} prompt */
 function getPromptIsTreeTYSetup(prompt) {
   return (
-    prompt === treeTYSetupSkillPrompt || prompt === treeTYSetupSlashPrompt
+    prompt === treeTYSetupQualifiedSkillPrompt ||
+    prompt === treeTYSetupSkillPrompt ||
+    prompt === treeTYSetupSlashPrompt
   );
 }
 
