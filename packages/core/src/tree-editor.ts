@@ -111,6 +111,35 @@ export function addTreeTerminal(
   return addTreeNode(treeConfig, treeTerminalConfig, options.parentId);
 }
 
+export function duplicateTreeTerminal(
+  treeConfig: TreeConfig,
+  nodeId: string,
+): TreeConfig {
+  const treeNodeConfig = getTreeNode(treeConfig, nodeId);
+
+  if (!treeNodeConfig) {
+    throw new TreeNodeOperationError(`Tree node "${nodeId}" does not exist.`);
+  }
+
+  if (treeNodeConfig.kind !== "terminal") {
+    throw new TreeNodeOperationError(
+      `Tree node "${nodeId}" is not a terminal.`,
+    );
+  }
+
+  const duplicatedTreeTerminalConfig: TreeTerminalConfig = {
+    ...treeNodeConfig,
+    id: createTreeNodeId(treeConfig),
+  };
+
+  return insertTreeNodeBesideSibling(
+    treeConfig,
+    duplicatedTreeTerminalConfig,
+    nodeId,
+    true,
+  );
+}
+
 export function renameTreeNode(
   treeConfig: TreeConfig,
   nodeId: string,

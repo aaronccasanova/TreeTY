@@ -5,6 +5,7 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
+  duplicateTreeTerminal,
   getAffectedTreeNodeAttentionIds,
   getTreeStateFilePath,
   getTreeNode,
@@ -374,6 +375,18 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
+  public async duplicateTerminal(
+    nodeTreeEntry: NodeTreeEntry,
+  ): Promise<void> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+
+    await this.writeWorkspaceTreeConfig(
+      nodeTreeEntry.workspaceModel,
+      (treeConfig) =>
+        duplicateTreeTerminal(treeConfig, nodeTreeEntry.treeNode.id),
+    );
+  }
+
   public async moveNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
     const moveTreeNodeOptions = await showMoveTreeEditor(nodeTreeEntry);
 
@@ -414,11 +427,19 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         execute: () => this.configureNode(nodeTreeEntry),
         label: "$(settings-gear) Configure",
       },
-      {
-        execute: () => this.moveNode(nodeTreeEntry),
-        label: "$(type-hierarchy-sub) Move",
-      },
     );
+
+    if (nodeTreeEntry.treeNode.kind === "terminal") {
+      nodeActionQuickPickItems.push({
+        execute: () => this.duplicateTerminal(nodeTreeEntry),
+        label: "$(copy) Duplicate terminal",
+      });
+    }
+
+    nodeActionQuickPickItems.push({
+      execute: () => this.moveNode(nodeTreeEntry),
+      label: "$(type-hierarchy-sub) Move",
+    });
 
     if (nodeTreeEntry.treeNode.kind === "terminal") {
       const terminalSessionState = this.getTerminalSessionState(
