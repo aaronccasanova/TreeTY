@@ -105,6 +105,12 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "treety.duplicateTerminal",
+        "title": "Duplicate Terminal",
+        "category": "TreeTY",
+        "icon": "$(copy)"
+      },
+      {
         "command": "treety.moveNode",
         "title": "Move",
         "category": "TreeTY",
@@ -334,6 +340,11 @@
         {
           "command": "treety.moveNode",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
+          "group": "modification@4"
+        },
+        {
+          "command": "treety.duplicateTerminal",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
           "group": "modification@3"
         },
         {
@@ -364,7 +375,7 @@
         {
           "command": "treety.deleteNode",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
-          "group": "modification@4"
+          "group": "modification@5"
         },
         {
           "command": "treety.addDirectoryToWorkspace",
@@ -403,6 +414,10 @@
         },
         {
           "command": "treety.configureNode",
+          "when": "false"
+        },
+        {
+          "command": "treety.duplicateTerminal",
           "when": "false"
         },
         {
