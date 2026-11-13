@@ -1,6 +1,10 @@
 # Releasing TreeTY
 
-Releases are automated with Changesets 3 and [the Changesets GitHub Action](https://github.com/changesets/action). A merged delivery change produces or updates a release pull request. Merge that reviewed release PR to publish the npm packages in dependency order and then publish the VS Code Marketplace pre-release.
+Local builds are the primary iteration workflow. On macOS or Linux, run `pnpm install:snapshot` from a checkout to install locked dependencies, build, package, and install the extension with its matching bundled CLI. Publishing is optional and can happen less frequently than development.
+
+Keep Changesets with shipped changes so release notes and package versions stay ready for a future release. Delivery PRs can merge into `main` while the generated `Version Packages` PR remains open. Local snapshots use the checkout's current package versions and never consume Changesets or change those versions.
+
+When a published release is wanted, Changesets 3 and [the Changesets GitHub Action](https://github.com/changesets/action) retain the existing release flow. Merge the reviewed release PR to publish the npm packages in dependency order and then publish the VS Code Marketplace pre-release. The CLI and extension remain independently versioned. Compatibility for local installation comes from bundling both from the same checkout.
 
 ## Add a changeset
 

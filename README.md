@@ -2,6 +2,43 @@
 
 TreeTY turns terminal sessions into a persistent, hierarchical workspace. Its first adapters are a VS Code extension and the `@treety/cli` package, while its core engine has no host dependencies.
 
+## Install a local build
+
+Local builds are the primary development workflow. You can run the latest checkout without waiting for a Marketplace release. npm and Marketplace publishing remain available for occasional releases.
+
+The one-command packaging and installation helpers support macOS and Linux. Requirements: Node.js 22 or newer, the pnpm version declared in `package.json`, and VS Code's `code` command on your `PATH`. On macOS, run "Shell Command: Install 'code' command in PATH" from VS Code's Command Palette if needed.
+
+Clone the repository, then run one command to install dependencies, build, package, and install TreeTY:
+
+```sh
+git clone https://github.com/aaronccasanova/TreeTY.git
+cd TreeTY
+pnpm install:snapshot
+```
+
+The installer checks for `code`, runs `pnpm install --frozen-lockfile`, builds the core and extension, packages a timestamped VSIX under `artifacts/`, and runs `code --install-extension <artifact> --force`. The CLI is bundled from the same checkout as the extension. No separate CLI installation or npm publication is needed.
+
+Run "Developer: Reload Window" after installation, then create new integrated terminals. TreeTY prepends its bundled CLI directory to new terminals' `PATH`, including ordinary VS Code terminals. Existing terminals retain their previous environment, so recreate them to pick up the installed build. The CLI still requires Node.js 22 or newer on `PATH`.
+
+After pulling changes or editing a feature locally, rerun `pnpm install:snapshot`. Snapshot timestamps distinguish artifact filenames without changing source package versions. To keep using local snapshots, disable auto-update for TreeTY in VS Code's Extensions view so a later Marketplace release does not replace your local build.
+
+If you previously installed `@treety/cli` globally, you can remove that installation with the package manager you used, such as `pnpm remove --global @treety/cli` or `npm uninstall --global @treety/cli`. First verify `treety help` in a new VS Code terminal. Outside VS Code, you can still use the standalone CLI described below.
+
+### Windows local builds
+
+The Node packaging helper does not currently support Windows command launchers. From PowerShell, use the equivalent individual commands below. This Windows sequence has not been tested by this change.
+
+```powershell
+pnpm install --frozen-lockfile
+pnpm --filter @treety/core run build
+pnpm --filter treety run build
+New-Item -ItemType Directory -Force artifacts | Out-Null
+pnpm --filter treety exec vsce package --no-dependencies --out ../../artifacts/treety-local.vsix
+code --install-extension artifacts/treety-local.vsix --force
+```
+
+Reload VS Code and create new terminals afterward. This fallback reuses `artifacts/treety-local.vsix` rather than creating timestamped snapshots.
+
 ## MVP behavior
 
 - Render nested groups and terminal leaves in a dedicated Activity Bar view.
@@ -68,9 +105,9 @@ Add `--global` to make the skill available across projects. The installer can ta
 
 ## CLI
 
-The publishable `@treety/cli` package wraps the core management API and exposes the `treety` executable.
+The VS Code extension includes the `treety` executable and exposes it in new integrated terminals. Prefer this copy when working in VS Code, as it comes from the same source revision as the extension. The packages keep independent release versions.
 
-Run a command without installing it globally:
+Outside VS Code, the publishable `@treety/cli` package remains available. Run a command without installing it globally:
 
 ```sh
 pnpm dlx @treety/cli init
@@ -242,10 +279,10 @@ Adding the first folder to an empty VS Code window can restart the extension hos
 
 ## Development
 
-Requirements: Node.js 22 or newer and pnpm 10 or newer.
+Use `pnpm install:snapshot` for the complete local installation workflow above. To install dependencies and run checks without changing your VS Code installation:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm build
@@ -253,32 +290,18 @@ pnpm build
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
 
-The core library, CLI, Pi integration, Codex integration, and VS Code extension are versioned independently. Create the stable local VSIX path with:
-
-```sh
-pnpm package
-```
-
-This writes `artifacts/treety-0.1.6.vsix`. Development snapshots use a sortable UTC timestamp with millisecond precision so repeated builds never overwrite each other:
+After dependencies are installed, package a snapshot without installing it:
 
 ```sh
 pnpm package:snapshot
 ```
 
-For example, this can create `artifacts/treety-0.1.5-snapshot.20260808T221530123Z.vsix`. The command prints the exact `code --install-extension ... --force` command for the new artifact.
+This builds the required core package and extension, then writes an artifact such as `artifacts/treety-0.1.8-snapshot.20261113T221530123Z.vsix`. The command prints its exact installation command. The timestamp identifies the artifact only. The version embedded in the VSIX remains the version in `packages/vscode/package.json`.
 
-Build and force-install a fresh snapshot in one step with:
+Use `pnpm package` for `artifacts/treety-<version>.vsix`, or `pnpm package:pre-release` for a Marketplace pre-release artifact. Neither command installs the extension or publishes anything.
 
-```sh
-pnpm install:snapshot
-```
-
-Snapshot timestamps identify local artifacts only. Build a Marketplace pre-release with:
-
-```sh
-pnpm package:pre-release
-```
+Keep adding Changesets for shipped changes. Local builds do not require merging the generated `Version Packages` PR. Merge that PR when a published release is wanted. The core library, CLI, Pi integration, Codex integration, and VS Code extension remain independently versioned.
 
 VS Code pre-releases use odd minor versions (`0.1.x`, `0.3.x`, etc). Stable releases use even minor versions (`0.2.x`, `0.4.x`, etc). Pre-release status is stored in the VSIX manifest rather than a SemVer suffix.
 
-See [RELEASING.md](RELEASING.md) for the complete npm and VS Code Marketplace release workflow.
+See [RELEASING.md](RELEASING.md) for the optional npm and VS Code Marketplace release workflow.

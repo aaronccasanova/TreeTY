@@ -2,7 +2,27 @@
 
 TreeTY organizes native VS Code terminals into a nested, persistent tree.
 
-TreeTY is currently available as an early pre-release. The configuration format and commands may evolve before the first stable release.
+TreeTY is under active development. Local builds are the primary iteration workflow, with occasional npm and Marketplace releases. The configuration format and commands may evolve before the first stable release.
+
+## Install from source
+
+On macOS or Linux, with Node.js 22 or newer, the pnpm version declared in the repository's `package.json`, and VS Code's `code` launcher on `PATH`, run:
+
+```sh
+git clone https://github.com/aaronccasanova/TreeTY.git
+cd TreeTY
+pnpm install:snapshot
+```
+
+Windows users can follow the [manual build steps in the repository README](https://github.com/aaronccasanova/TreeTY#windows-local-builds).
+
+The command installs locked dependencies, builds the core and extension, creates a timestamped VSIX, and force-installs it locally. Rerun it after pulling changes or editing the checkout. For an artifact without installation, run `pnpm install --frozen-lockfile` once, then `pnpm package:snapshot`.
+
+Run "Developer: Reload Window" after installation, then create new terminals. The extension provides the matching `treety` CLI in new integrated terminals, including terminals created outside TreeTY. Its CLI is bundled from the same checkout, so you don't need a global `@treety/cli` installation. Node.js 22 or newer must remain available on `PATH`. Existing terminals keep their old environment and need to be recreated to use the new build.
+
+You can disable auto-update for TreeTY in VS Code's Extensions view to keep Marketplace updates from replacing a local snapshot. Snapshot filenames include a timestamp, while the embedded extension version stays unchanged.
+
+## Use the terminal tree
 
 TreeTY shows the global root first as a stable anchor, followed by an explicit root for every open workspace. Initialize a local root to create `.treety/tree.json`, or initialize the global root to create `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.
 
@@ -19,7 +39,5 @@ Configure uses a filterable path field that accepts relative or absolute directo
 `TreeTY: Global Tree Visibility` shows local and global roots together by default. It can instead keep the global tree as a fallback or hide it while folders are open. Empty windows always load the global root.
 
 The extension includes JSON validation and completion for the configuration file. The source workspace's root README contains the full configuration reference and architecture.
-
-For local feedback loops, run `pnpm install:snapshot` from the repository root. It builds a uniquely timestamped VSIX under `artifacts/` and force-installs it with the VS Code CLI. Run `pnpm package:snapshot` when you want the artifact without installing it.
 
 Source code, issue tracking, and CLI documentation are available in the [TreeTY repository](https://github.com/aaronccasanova/TreeTY).

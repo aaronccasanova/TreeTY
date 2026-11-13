@@ -32,6 +32,9 @@ importers:
 
   packages/vscode:
     dependencies:
+      '@treety/cli':
+        specifier: workspace:*
+        version: link:../cli
       '@treety/core':
         specifier: workspace:*
         version: link:../core

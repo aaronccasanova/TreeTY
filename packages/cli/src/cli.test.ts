@@ -25,6 +25,21 @@ interface CapturedOutput {
   };
 }
 
+test.test("reports the CLI package version", async () => {
+  const cliPackageConfig = require("../package.json") as { version: string };
+
+  for (const versionArgument of ["version", "--version", "-v"]) {
+    const capturedOutput = createCapturedOutput();
+
+    assert.equal(
+      await runCli([versionArgument], { output: capturedOutput.output }),
+      0,
+    );
+    assert.deepEqual(capturedOutput.messages, [cliPackageConfig.version]);
+    assert.deepEqual(capturedOutput.errors, []);
+  }
+});
+
 test.test("manages a complete local tree lifecycle", async () => {
   const temporaryDirPath = await fs.mkdtemp(
     path.join(os.tmpdir(), "treety-cli-"),

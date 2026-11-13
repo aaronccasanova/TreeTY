@@ -42,6 +42,7 @@
     "shells"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:treety.terminals",
     "onCommand:treety.initializeWorkspace",
     "onCommand:treety.initializeGlobalTree",
@@ -425,11 +426,13 @@
     }
   },
   "scripts": {
-    "build": "pnpm run check && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js --sourcemap",
+    "build": "pnpm run check && node ../../scripts/build-vscode-extension.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "package": "node ../../scripts/package-vscode-extension.mjs"
+    "package": "node ../../scripts/package-vscode-extension.mjs",
+    "test": "pnpm run build && esbuild src/terminal-environment.test.ts --bundle --platform=node --format=cjs --outfile=dist/terminal-environment.test.js && node --test dist/terminal-environment.test.js test/bundled-cli.test.mjs"
   },
   "dependencies": {
+    "@treety/cli": "workspace:*",
     "@treety/core": "workspace:*"
   },
   "devDependencies": {

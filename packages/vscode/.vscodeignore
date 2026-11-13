@@ -1,6 +1,8 @@
 .vscode/**
 src/**
+test/**
 tsconfig.json
 node_modules/**
 dist/**/*.map
+dist/**/*.test.*
 pnpm-lock.yaml

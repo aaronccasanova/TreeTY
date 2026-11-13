@@ -2,6 +2,14 @@
 
 The `TreeTY.treety` extension renders global and workspace configurations in a dedicated Activity Bar tree and uses native VS Code integrated terminals as its process host.
 
+## Install a local build and use its CLI
+
+On macOS or Linux, run `pnpm install:snapshot` from the TreeTY checkout for the local development workflow. It installs dependencies with the frozen lockfile, builds the required core package and extension, packages a timestamped VSIX, and installs it using the VS Code `code` launcher. Node.js 22 or newer, the repository's pinned pnpm version, and `code` must be available on `PATH`. Use `pnpm package:snapshot` after dependency installation to build the artifact without changing the installed extension. The Node packaging helper does not support Windows command launchers. Follow the manual Windows build commands in the repository README instead.
+
+Reload the VS Code window after installing, then create new terminals. The extension prepends its bundled CLI directory to new integrated terminals' `PATH`, including ordinary VS Code terminals. Prefer that `treety` executable over an independently installed version. Existing terminals keep their previous environment. The CLI still needs Node.js on `PATH`, and the standalone npm package remains available outside VS Code.
+
+Local builds do not require publishing or merging the generated release PR. Continue including Changesets with shipped changes for occasional releases.
+
 ## Understand configuration and refresh
 
 - Local trees live at `<workspace>/.treety/tree.json`.

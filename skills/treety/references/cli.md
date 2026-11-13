@@ -4,7 +4,15 @@ Use `@treety/cli` to inspect and mutate TreeTY configuration. It exposes the `tr
 
 ## Choose a runner
 
-Prefer an installed, project-pinned executable when available:
+Inside VS Code, prefer the `treety` executable provided by the TreeTY extension:
+
+```sh
+treety help
+```
+
+The extension prepends its bundled CLI directory to new integrated terminals' `PATH`, keeping the CLI on the same source revision as the extension. Node.js 22 or newer is still required. After updating the extension, reload the window and recreate terminals to receive its current environment. Do not replace this copy with a published npm version merely because the CLI and extension have different package version numbers.
+
+Outside VS Code, prefer an installed, project-pinned executable when available:
 
 ```sh
 pnpm exec treety help

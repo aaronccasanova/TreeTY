@@ -1,12 +1,15 @@
 import * as vscode from "vscode";
 
 import { showCommandError, TreeTYController } from "./controller";
+import { configureTerminalEnvironment } from "./terminal-environment";
 import { TreeTYTreeProvider } from "./tree-provider";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 
 export async function activate(
   extensionContext: vscode.ExtensionContext,
 ): Promise<void> {
+  configureTerminalEnvironment(extensionContext);
+
   const treeTYController = new TreeTYController();
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
   const treeTYTreeView = vscode.window.createTreeView("treety.terminals", {

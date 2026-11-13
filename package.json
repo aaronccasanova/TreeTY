@@ -26,7 +26,8 @@
     "release:verify": "pnpm test && pnpm package:pre-release",
     "release:publish": "pnpm release:verify && pnpm changeset publish && pnpm release:publish:vscode",
     "release:publish:vscode": "node scripts/publish-versioned-vscode-extension.mjs --pre-release",
-    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test && pnpm --filter @treety/codex run test"
+    "test": "pnpm --filter @treety/core run test && pnpm --filter @treety/cli run test && pnpm --filter @treety/pi run test && pnpm --filter @treety/codex run test && pnpm --filter treety run test && pnpm run test:scripts",
+    "test:scripts": "node --test scripts/*.test.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^3.0.1",
