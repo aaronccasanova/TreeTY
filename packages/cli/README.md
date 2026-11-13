@@ -2,6 +2,16 @@
 
 The `@treety/cli` package exposes the `treety` command. It manages the same tree configuration consumed by TreeTY's host adapters.
 
+## Use the bundled CLI in VS Code
+
+The TreeTY VS Code extension includes this CLI from the same source revision and adds it to new integrated terminals' `PATH`. Run `treety help` directly there. No global or project CLI installation is needed, and updating the extension updates its bundled CLI. Package release versions remain independent.
+
+After installing or rebuilding the extension, run "Developer: Reload Window" and create new terminals. Existing terminals retain their old environment. The CLI requires Node.js 22 or newer on `PATH`.
+
+You can remove a previous global installation with the package manager that installed it (`pnpm remove --global @treety/cli` or `npm uninstall --global @treety/cli`) after checking `treety help` in a new VS Code terminal.
+
+## Use the standalone CLI outside VS Code
+
 Run it without a global installation:
 
 ```sh

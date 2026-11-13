@@ -59,7 +59,7 @@ interface TreeConfigCommandContext {
   treeConfigFilePath: string;
 }
 
-const cliVersion = "0.0.3";
+const cliPackageConfig = require("../package.json") as { version: string };
 
 const optionNameByAlias = new Map([
   ["-c", "--config"],
@@ -98,7 +98,7 @@ export async function runCli(
     const commandName = parsedCommandArguments.commandArguments[0];
 
     if (commandName === "version" || hasFlag(parsedCommandArguments, "--version")) {
-      runCliOptions.output.writeOutput(cliVersion);
+      runCliOptions.output.writeOutput(cliPackageConfig.version);
 
       return 0;
     }
@@ -1186,7 +1186,7 @@ function getOptionValues(
 }
 
 function getHelpContent(): string {
-  return `TreeTY ${cliVersion}
+  return `TreeTY ${cliPackageConfig.version}
 
 Manage hierarchical terminal workspaces.
 
