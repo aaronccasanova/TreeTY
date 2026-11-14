@@ -31,6 +31,8 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import { collapseMoveTree } from "./move-tree-state";
+import type { MoveTreeEditorState } from "./move-tree-state";
 import { revealTerminalLink } from "./terminal-links";
 import type { TerminalLinkManager, TerminalLinkTarget } from "./terminal-links";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
@@ -64,12 +66,6 @@ interface MoveTreeQuickPickItem extends vscode.QuickPickItem {
   containerId?: string;
   isContainer: boolean;
   treeNode?: ResolvedTreeNode;
-}
-
-interface MoveTreeEditorState {
-  collapsedGroupIds: ReadonlySet<string>;
-  isRootCollapsed: boolean;
-  showAllGroups: boolean;
 }
 
 interface NodeActionQuickPickItem extends vscode.QuickPickItem {
@@ -1520,25 +1516,24 @@ async function showMoveTreeEditor(
 ): Promise<MoveTreeNodeOptions | undefined> {
   const moveTreeQuickPick =
     vscode.window.createQuickPick<MoveTreeQuickPickItem>();
-  const groupIds = getGroupIds(
-    nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
-  );
-  const collapsedGroupIds = new Set<string>();
+  let moveTreeEditorState: MoveTreeEditorState = {
+    collapsedGroupIds: new Set<string>(),
+    isRootCollapsed: false,
+    showAllGroups: false,
+  };
   const expandEntireTreeButton: vscode.QuickInputButton = {
     iconPath: new vscode.ThemeIcon("expand-all"),
     tooltip: "Expand entire tree",
   };
-  const collapseEntireTreeButton: vscode.QuickInputButton = {
+  const collapseTreeButton: vscode.QuickInputButton = {
     iconPath: new vscode.ThemeIcon("collapse-all"),
-    tooltip: "Collapse entire tree",
+    tooltip: "Collapse groups, then tree root",
   };
-  let isRootCollapsed = false;
   let isResolved = false;
 
   const refreshMoveTreeQuickPickItems = (): void => {
     moveTreeQuickPick.items = getMoveTreeQuickPickItems(nodeTreeEntry, {
-      collapsedGroupIds,
-      isRootCollapsed,
+      ...moveTreeEditorState,
       showAllGroups: moveTreeQuickPick.value.trim() !== "",
     });
   };
@@ -1549,7 +1544,7 @@ async function showMoveTreeEditor(
     "Use a row's arrows to insert above, inside, or below. Select a group to expand or collapse it.";
   moveTreeQuickPick.buttons = [
     expandEntireTreeButton,
-    collapseEntireTreeButton,
+    collapseTreeButton,
   ];
   moveTreeQuickPick.matchOnDescription = true;
 
@@ -1580,12 +1575,16 @@ async function showMoveTreeEditor(
 
     moveTreeQuickPick.onDidTriggerButton((button) => {
       if (button === expandEntireTreeButton) {
-        collapsedGroupIds.clear();
-        isRootCollapsed = false;
-      } else if (button === collapseEntireTreeButton) {
-        for (const groupId of groupIds) collapsedGroupIds.add(groupId);
-
-        isRootCollapsed = true;
+        moveTreeEditorState.collapsedGroupIds.clear();
+        moveTreeEditorState.isRootCollapsed = false;
+      } else if (button === collapseTreeButton) {
+        moveTreeEditorState = collapseMoveTree(
+          nodeTreeEntry.workspaceModel.resolvedTreeConfig.tree,
+          {
+            ...moveTreeEditorState,
+            showAllGroups: moveTreeQuickPick.value.trim() !== "",
+          },
+        );
       } else {
         return;
       }
@@ -1600,13 +1599,13 @@ async function showMoveTreeEditor(
       if (!selectedMoveTreeQuickPickItem?.isContainer) return;
 
       if (!selectedMoveTreeQuickPickItem.containerId) {
-        isRootCollapsed = !isRootCollapsed;
+        moveTreeEditorState.isRootCollapsed = !moveTreeEditorState.isRootCollapsed;
       } else if (
-        collapsedGroupIds.has(selectedMoveTreeQuickPickItem.containerId)
+        moveTreeEditorState.collapsedGroupIds.has(selectedMoveTreeQuickPickItem.containerId)
       ) {
-        collapsedGroupIds.delete(selectedMoveTreeQuickPickItem.containerId);
+        moveTreeEditorState.collapsedGroupIds.delete(selectedMoveTreeQuickPickItem.containerId);
       } else {
-        collapsedGroupIds.add(selectedMoveTreeQuickPickItem.containerId);
+        moveTreeEditorState.collapsedGroupIds.add(selectedMoveTreeQuickPickItem.containerId);
       }
 
       refreshMoveTreeQuickPickItems();
@@ -1768,14 +1767,6 @@ function getMoveTreeNodeLabelIcon(
   if (treeNode.kind === "terminal") return "$(terminal)";
 
   return `$(${isGroupExpanded ? "chevron-down" : "chevron-right"}) $(folder)`;
-}
-
-function getGroupIds(treeNodes: readonly ResolvedTreeNode[]): string[] {
-  return treeNodes.flatMap((treeNode) => {
-    if (treeNode.kind === "terminal") return [];
-
-    return [treeNode.id, ...getGroupIds(treeNode.children)];
-  });
 }
 
 function getTreeNodeIds(treeNode: ResolvedTreeNode): string[] {
