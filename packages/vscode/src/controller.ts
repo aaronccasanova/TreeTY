@@ -557,11 +557,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     vscode.window.setStatusBarMessage("TreeTY: Terminal link copied", 3000);
   }
 
-  public async revealTerminalLink(target: TerminalLinkTarget): Promise<void> {
+  public async revealTerminalLink(
+    target: TerminalLinkTarget,
+    revealNode: (nodeTreeEntry: NodeTreeEntry) => PromiseLike<void>,
+  ): Promise<void> {
     await this.workspaceReloadPromise;
     await revealTerminalLink({
       target,
       workspaceModels: this.workspaceModels,
+      revealNode,
       validateTerminal: async (nodeTreeEntry) => {
         const treeConfig = parseTreeConfigContent(
           new TextDecoder().decode(

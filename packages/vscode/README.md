@@ -58,7 +58,7 @@ Choose **Copy terminal link** from a running terminal's actions or context menu.
 treety link
 ```
 
-The extension resolves the complete link through VS Code's `asExternalUri` API so it returns to the originating window. The link includes the configuration URI, node ID, and live terminal session ID. Clicking it reveals and focuses that exact native terminal and clears its attention marker. It does not start a stopped terminal, run a supplied command, load an arbitrary configuration, or change the workspace.
+The extension resolves the complete link through VS Code's `asExternalUri` API so it returns to the originating window. The link includes the configuration URI, node ID, and live terminal session ID. Clicking it reveals and selects the matching TreeTY leaf, expanding its parent groups as needed, then gives keyboard focus to that exact native terminal and clears its attention marker. It does not start a stopped terminal, run a supplied command, load an arbitrary configuration, or change the workspace.
 
 Use the returned string unchanged as a notification's URL or Markdown target. For example, a shell integration can prepare a message after a task finishes:
 
