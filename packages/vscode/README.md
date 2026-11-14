@@ -22,6 +22,14 @@ Run "Developer: Reload Window" after installation, then create new terminals. Th
 
 You can disable auto-update for TreeTY in VS Code's Extensions view to keep Marketplace updates from replacing a local snapshot. Snapshot filenames include a timestamp, while the embedded extension version stays unchanged.
 
+## Find a group or terminal
+
+Click the search icon in the TreeTY title bar or run **TreeTY: Search Nodes**. Search names, ancestor groups, workspace names, directories, and descriptive metadata across current trees, including collapsed groups. Results show their hierarchy and location. Press Enter to reveal and expand a group or open and focus a terminal. Escape cancels.
+
+Abbreviations such as `pst` for "Payments service tests" and small typos such as `paymnets` work. Words can match different fields, so `payments tests` can find "Service tests" under "Payments". Matching ignores case and accents. Search updates immediately as you type and stays current as nodes are added, renamed, moved, or removed.
+
+Descriptive metadata supports strings and arrays of strings in `title`, `description`, `summary`, `tags`, `labels`, `owner`, `project`, `service`, `category`, and `aliases`. Parent group metadata also helps find children. Search does not index environment values, commands, nested metadata objects, or integration session data.
+
 ## Use the terminal tree
 
 TreeTY shows the global root first as a stable anchor, followed by an explicit root for every open workspace. Initialize a local root to create `.treety/tree.json`, or initialize the global root to create `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json`.

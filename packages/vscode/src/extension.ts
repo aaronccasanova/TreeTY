@@ -1,6 +1,9 @@
 import * as vscode from "vscode";
 
 import { showCommandError, TreeTYController } from "./controller";
+import { resolveNodeSearchEntry } from "./node-search";
+import { NodeSearchPicker } from "./node-search-picker";
+import type { NodeSearchQuickPickItem } from "./node-search-picker";
 import { configureTerminalEnvironment } from "./terminal-environment";
 import { handleTerminalLink, TerminalLinkManager } from "./terminal-links";
 import { TreeTYTreeProvider } from "./tree-provider";
@@ -24,10 +27,38 @@ export async function activate(
     treeDataProvider: treeTYTreeProvider,
   });
 
+  const nodeSearchPicker = new NodeSearchPicker({
+    workspaceModelSource: treeTYController,
+    createQuickPick: () => vscode.window.createQuickPick<NodeSearchQuickPickItem>(),
+    openNode: async (nodeTreeEntry) => {
+      await treeTYTreeView.reveal(nodeTreeEntry, {
+        select: true,
+        focus: nodeTreeEntry.treeNode.kind === "group",
+        expand: nodeTreeEntry.treeNode.kind === "group",
+      });
+
+      if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+
+      const currentNodeTreeEntry = resolveNodeSearchEntry(
+        treeTYController.getWorkspaceModels(),
+        { workspaceId: nodeTreeEntry.workspaceModel.id, nodeId: nodeTreeEntry.treeNode.id },
+      );
+
+      if (!currentNodeTreeEntry) {
+        throw new Error("The selected terminal is no longer available.");
+      }
+
+      await treeTYController.openTerminal(currentNodeTreeEntry);
+    },
+    showError: showCommandError,
+  });
+
   extensionContext.subscriptions.push(
     treeTYController,
     treeTYTreeProvider,
     treeTYTreeView,
+    nodeSearchPicker,
+    vscode.commands.registerCommand("treety.searchNodes", () => nodeSearchPicker.show()),
     vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
     registerAsyncCommand("treety.collapseAll", async () => {

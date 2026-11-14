@@ -122,6 +122,28 @@ export class TreeTYTreeProvider
     return childTreeEntries;
   }
 
+  public getParent(treeEntry: TreeEntry): TreeEntry | undefined {
+    if (treeEntry.kind === "workspace") return undefined;
+
+    const workspaceModel = this.workspaceModelSource.getWorkspaceModels().find(
+      (candidateWorkspaceModel) => candidateWorkspaceModel.id === treeEntry.workspaceModel.id,
+    );
+
+    if (!workspaceModel) return undefined;
+
+    if (treeEntry.kind === "node" && workspaceModel.kind === "configured") {
+      const treeNode = getResolvedTreeNode(workspaceModel.resolvedTreeConfig.tree, treeEntry.treeNode.id);
+
+      if (treeNode?.parentId) {
+        const parentTreeNode = getResolvedTreeNode(workspaceModel.resolvedTreeConfig.tree, treeNode.parentId);
+
+        if (parentTreeNode) return { kind: "node", workspaceModel, treeNode: parentTreeNode };
+      }
+    }
+
+    return { kind: "workspace", workspaceModel };
+  }
+
   public provideFileDecoration(
     uri: vscode.Uri,
   ): vscode.FileDecoration | undefined {

@@ -59,6 +59,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "treety.searchNodes",
+        "title": "Search Nodes",
+        "category": "TreeTY",
+        "icon": "$(search)"
+      },
+      {
         "command": "treety.initializeWorkspace",
         "title": "Initialize Workspace",
         "category": "TreeTY",
@@ -252,6 +258,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "treety.searchNodes",
+          "when": "view == treety.terminals",
+          "group": "navigation@0"
+        },
         {
           "command": "treety.createTerminal",
           "when": "view == treety.terminals",
