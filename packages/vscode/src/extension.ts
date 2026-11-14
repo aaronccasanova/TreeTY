@@ -6,6 +6,7 @@ import { NodeSearchPicker } from "./node-search-picker";
 import type { NodeSearchQuickPickItem } from "./node-search-picker";
 import { configureTerminalEnvironment } from "./terminal-environment";
 import { handleTerminalLink, TerminalLinkManager } from "./terminal-links";
+import { TreeCollapseController } from "./tree-collapse-controller";
 import { TreeTYTreeProvider } from "./tree-provider";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 
@@ -25,6 +26,13 @@ export async function activate(
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
   const treeTYTreeView = vscode.window.createTreeView("treety.terminals", {
     treeDataProvider: treeTYTreeProvider,
+  });
+
+  const treeCollapseController = new TreeCollapseController({
+    treeView: treeTYTreeView,
+    collapseAll: () => vscode.commands.executeCommand(
+      "workbench.actions.treeView.treety.terminals.collapseAll",
+    ),
   });
 
   const nodeSearchPicker = new NodeSearchPicker({
@@ -61,11 +69,7 @@ export async function activate(
     vscode.commands.registerCommand("treety.searchNodes", () => nodeSearchPicker.show()),
     vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
     registerAsyncCommand("treety.refresh", () => treeTYController.refresh()),
-    registerAsyncCommand("treety.collapseAll", async () => {
-      await vscode.commands.executeCommand(
-        "workbench.actions.treeView.treety.terminals.collapseAll",
-      );
-    }),
+    registerAsyncCommand("treety.collapseAll", () => treeCollapseController.collapseAll()),
     registerAsyncCommand(
       "treety.initializeWorkspace",
       (treeEntry?: TreeEntry) =>
