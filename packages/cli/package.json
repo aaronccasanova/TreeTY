@@ -1,6 +1,6 @@
 {
   "name": "@treety/cli",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Manage hierarchical terminal workspaces from the command line.",
   "license": "MIT",
   "bin": {
