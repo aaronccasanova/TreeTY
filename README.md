@@ -234,6 +234,12 @@ Host adapters inject a standard terminal context built by `@treety/core`: `TREET
 
 ## VS Code workflow
 
+Use the search button in the TreeTY title bar or **TreeTY: Search Nodes** in the Command Palette to find groups and terminals across current local and global trees, including collapsed groups. Results show their ancestry and directories so identical names remain distinguishable. Enter reveals and expands a group, or opens and focuses a terminal. Escape closes search without changing the tree.
+
+Search accepts abbreviations (`pst` for "Payments service tests"), small typos (`paymnets`), and terms spread across fields (`payments tests`, `platform nightly`). Matching ignores case and accents. Names take priority over ancestry, directories, and descriptive metadata. VS Code applies its native ordering to name matches, with TreeTY ranking the remaining results. Filtering is immediate, and results update when configuration changes.
+
+Searchable metadata is limited to string values or arrays of strings in `title`, `description`, `summary`, `tags`, `labels`, `owner`, `project`, `service`, `category`, and `aliases`. Group descriptions and tags also help find descendants. Environment values, commands, nested metadata objects, and integration session data are not indexed. Metadata text is bounded to keep large configurations responsive.
+
 Select a local root, global root, or group, then use the view title controls to create a terminal or group at that location. `+` always means terminal, and `new folder` always means group. The selected destination is repeated in the create prompt. The same create actions are available inline and from root and group context menus.
 
 Terminal rows open or reveal their native terminal when selected. Hover controls expose delete followed by an actions gear, which stays at the far right. Group hover controls expose create terminal, create group, delete, and actions. The gear provides every action for the node, including delete, group creation shortcuts, and applicable terminal session actions; the context menu remains available. Context menus use concise action names, while the Command Palette groups the same commands under TreeTY. Configure edits working directory, project directory, environment, metadata, and restart policy without opening JSON. Stop closes the native terminal while preserving its entry for a later restart. Deleting a group confirms the descendant count and closes running terminals in that subtree. A valid CLI or file edit that removes a leaf also closes its matching live terminal.

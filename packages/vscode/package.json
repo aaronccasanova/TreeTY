@@ -58,6 +58,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "treety.searchNodes",
+        "title": "Search Nodes",
+        "category": "TreeTY",
+        "icon": "$(search)"
+      },
+      {
         "command": "treety.initializeWorkspace",
         "title": "Initialize Workspace",
         "category": "TreeTY",
@@ -246,6 +252,11 @@
     "menus": {
       "view/title": [
         {
+          "command": "treety.searchNodes",
+          "when": "view == treety.terminals",
+          "group": "navigation@0"
+        },
+        {
           "command": "treety.createTerminal",
           "when": "view == treety.terminals",
           "group": "navigation@1"
@@ -429,7 +440,7 @@
     "build": "pnpm run check && node ../../scripts/build-vscode-extension.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "package": "node ../../scripts/package-vscode-extension.mjs",
-    "test": "pnpm run build && esbuild src/terminal-environment.test.ts --bundle --platform=node --format=cjs --outfile=dist/terminal-environment.test.js && node --test dist/terminal-environment.test.js test/bundled-cli.test.mjs"
+    "test": "pnpm run build && esbuild src/*.test.ts --bundle --platform=node --format=cjs --outdir=dist/tests && node --test dist/tests/*.test.js test/bundled-cli.test.mjs"
   },
   "dependencies": {
     "@treety/cli": "workspace:*",

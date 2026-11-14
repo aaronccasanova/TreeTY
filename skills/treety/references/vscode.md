@@ -25,6 +25,14 @@ A successful CLI mutation should therefore update the TreeTY view without reload
 
 Tree changes reconcile only the workspace model identified by the changed URI. Existing terminal sessions and subscriptions survive moves, renames, metadata changes, inherited-setting changes, and launch-setting changes. Added nodes appear in place, removed leaves close their matching sessions, and newly applicable `onOpen` policies retain automatic launch behavior. State-only changes refresh attention without rebuilding the engine.
 
+## Find nodes in large trees
+
+Use the search icon in the TreeTY title bar or `TreeTY: Search Nodes` to find groups and terminals across current roots. The native QuickPick supports name abbreviations, small typos, ancestor/workspace names, directories, and descriptive metadata. Terms can match separate fields, such as a group name and leaf name. Results include ancestry to distinguish duplicate names.
+
+Accepting a group reveals and expands it. Accepting a terminal opens or reveals its native session through the usual controller behavior, including clearing attention. Cancelling does not launch a terminal. Search updates with tree changes and resolves the current node identity before accepting a selection.
+
+Only strings or string arrays in the metadata fields `title`, `description`, `summary`, `tags`, `labels`, `owner`, `project`, `service`, `category`, and `aliases` are searchable. Group metadata provides context for descendants. Environment, commands, nested metadata objects, and integration data are excluded.
+
 ## Distinguish definitions from sessions
 
 The CLI creates and changes persistent tree definitions. The VS Code adapter owns live sessions.
