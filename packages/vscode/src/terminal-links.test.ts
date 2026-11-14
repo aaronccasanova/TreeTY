@@ -117,7 +117,7 @@ nodeTest.test("URI handling waits for startup before revealing and propagates in
   assert.deepEqual(calls.slice(), ["reveal"]);
 });
 
-nodeTest.test("reveals only the exact configuration and live session, then clears attention", async () => {
+nodeTest.test("selects the exact tree node before focusing its live session, then clears attention", async () => {
   const fixture = createFixture();
   const otherFixture = createFixture("file:///other/.treety/tree.json");
 
@@ -125,14 +125,57 @@ nodeTest.test("reveals only the exact configuration and live session, then clear
     target: fixture.target,
     workspaceModels: [otherFixture.workspaceModel, fixture.workspaceModel],
     validateTerminal: async () => { fixture.calls.push("validate"); },
+    revealNode: async (nodeTreeEntry) => {
+      assert.equal(nodeTreeEntry.workspaceModel, fixture.workspaceModel);
+      assert.equal(nodeTreeEntry.treeNode.id, fixture.target.nodeId);
+      fixture.calls.push("select leaf");
+    },
     clearAttention: async () => { fixture.calls.push("clear attention"); },
   });
 
-  assert.deepEqual(fixture.calls, ["validate", "sessions", "focus session-123", "clear attention"]);
+  assert.deepEqual(fixture.calls, ["validate", "sessions", "select leaf", "focus session-123", "clear attention"]);
   assert.deepEqual(otherFixture.calls, []);
 
   // A new manager after extension reload still recognizes the recovered native session.
   assert.deepEqual(createTerminalLinks().parseTerminalLink(createTerminalLinkUri()), fixture.target);
+});
+
+nodeTest.test("waits for tree selection before giving keyboard focus to the terminal", async () => {
+  const fixture = createFixture();
+  let finishReveal: (() => void) | undefined;
+  const treeReveal = new Promise<void>((resolve) => { finishReveal = resolve; });
+  let notifyRevealStarted: (() => void) | undefined;
+  const revealStarted = new Promise<void>((resolve) => { notifyRevealStarted = resolve; });
+  const revealing = revealTerminalLink({
+    target: fixture.target,
+    workspaceModels: [fixture.workspaceModel],
+    validateTerminal: async () => {},
+    revealNode: async () => {
+      notifyRevealStarted?.();
+      await treeReveal;
+      fixture.calls.push("select leaf");
+    },
+    clearAttention: async () => { fixture.calls.push("clear attention"); },
+  });
+
+  await revealStarted;
+  assert.deepEqual(fixture.calls, ["sessions"]);
+  finishReveal?.();
+  await revealing;
+  assert.deepEqual(fixture.calls, ["sessions", "select leaf", "focus session-123", "clear attention"]);
+});
+
+nodeTest.test("still focuses the live terminal if revealing the tree fails", async () => {
+  const fixture = createFixture();
+
+  await assert.rejects(revealTerminalLink({
+    target: fixture.target,
+    workspaceModels: [fixture.workspaceModel],
+    validateTerminal: async () => {},
+    revealNode: async () => { throw new Error("tree unavailable"); },
+    clearAttention: async () => {},
+  }), /tree unavailable/);
+  assert.deepEqual(fixture.calls, ["sessions", "focus session-123"]);
 });
 
 nodeTest.test("wrong window, removed nodes, groups, and stopped or replaced sessions never reveal", async () => {
@@ -149,6 +192,7 @@ nodeTest.test("wrong window, removed nodes, groups, and stopped or replaced sess
       target,
       workspaceModels: [fixture.workspaceModel],
       validateTerminal: async () => {},
+      revealNode: async () => { fixture.calls.push("unexpected selection"); },
       clearAttention: async () => { throw new Error("must not clear"); },
     }));
   }
@@ -159,9 +203,11 @@ nodeTest.test("wrong window, removed nodes, groups, and stopped or replaced sess
     target: fixture.target,
     workspaceModels: [fixture.workspaceModel],
     validateTerminal: async () => {},
+    revealNode: async () => { fixture.calls.push("unexpected selection"); },
     clearAttention: async () => { throw new Error("must not clear"); },
   }), /no longer running/);
   assert.equal(fixture.calls.some((call) => call.startsWith("focus")), false);
+  assert.equal(fixture.calls.includes("unexpected selection"), false);
 });
 
 nodeTest.test("latest configuration validation fails before touching any live session", async () => {
@@ -171,6 +217,7 @@ nodeTest.test("latest configuration validation fails before touching any live se
     target: fixture.target,
     workspaceModels: [fixture.workspaceModel],
     validateTerminal: async () => { throw new Error("terminal was deleted from disk"); },
+    revealNode: async () => { fixture.calls.push("unexpected selection"); },
     clearAttention: async () => { throw new Error("must not clear"); },
   }), /deleted from disk/);
   assert.deepEqual(fixture.calls, []);
@@ -180,9 +227,12 @@ nodeTest.test("latest configuration validation fails before touching any live se
       target: fixture.target,
       workspaceModels: [{ ...fixture.workspaceModel, kind } as WorkspaceModel],
       validateTerminal: async () => { throw new Error("must not read"); },
+      revealNode: async () => { fixture.calls.push("unexpected selection"); },
       clearAttention: async () => { throw new Error("must not clear"); },
     }), /missing or invalid/);
   }
+
+  assert.deepEqual(fixture.calls, []);
 });
 
 function createTarget(): TerminalLinkTarget {

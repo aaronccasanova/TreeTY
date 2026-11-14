@@ -168,7 +168,9 @@ export async function activate(
             terminalLinks,
             uri,
             revealTerminalLink: (target) =>
-              treeTYController.revealTerminalLink(target),
+              treeTYController.revealTerminalLink(target, (nodeTreeEntry) =>
+                treeTYTreeView.reveal(nodeTreeEntry, { select: true, focus: false }),
+              ),
           });
         } catch (error) {
           showCommandError(error);

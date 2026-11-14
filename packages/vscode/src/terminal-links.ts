@@ -33,6 +33,7 @@ interface RevealTerminalLinkOptions {
   target: TerminalLinkTarget;
   workspaceModels: readonly WorkspaceModel[];
   validateTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void>;
+  revealNode(nodeTreeEntry: NodeTreeEntry): PromiseLike<void>;
   clearAttention(nodeTreeEntry: NodeTreeEntry): Promise<void>;
 }
 
@@ -128,7 +129,12 @@ export async function revealTerminalLink(
     );
   }
 
-  nodeTreeEntry.workspaceModel.vscodeTerminalHost.revealSession(session.id);
+  try {
+    await options.revealNode(nodeTreeEntry);
+  } finally {
+    // Keep terminal navigation working even if the tree cannot be revealed.
+    nodeTreeEntry.workspaceModel.vscodeTerminalHost.revealSession(session.id);
+  }
 
   await options.clearAttention(nodeTreeEntry);
 }
