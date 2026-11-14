@@ -71,6 +71,8 @@ const treeTYEngine = new TreeTYEngine(resolvedTreeConfig, terminalHost);
 await treeTYEngine.start();
 ```
 
+Honor the optional `TerminalLaunchRequest.signal` before creating a process after asynchronous preparation. The engine aborts pending launches on stop, removal, restart, or disposal, coalesces concurrent opens, and closes a late session from a host that cannot cancel.
+
 Call `treeTYEngine.reconcile(nextResolvedTreeConfig)` for a valid update. Reconciliation retains matching session state and host subscriptions, closes removed terminal sessions, updates definitions used by later launches, and applies newly relevant `onOpen` behavior.
 
 Route every TreeTY-owned `tree.json` and `state.json` mutation through the shared storage helpers. They acquire bounded cooperative locks, recover stale locks, reread after locking, validate the complete result, and atomically replace the file. A successful tree mutation also attempts stale-state pruning without rolling back the tree when state cleanup fails.

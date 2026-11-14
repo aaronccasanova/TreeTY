@@ -41,3 +41,27 @@ Configure uses a filterable path field that accepts relative or absolute directo
 The extension includes JSON validation and completion for the configuration file. The source workspace's root README contains the full configuration reference and architecture.
 
 Source code, issue tracking, and CLI documentation are available in the [TreeTY repository](https://github.com/aaronccasanova/TreeTY).
+
+## Link to a live terminal
+
+Choose **Copy terminal link** from a running terminal's actions or context menu. Inside a terminal created by TreeTY, print the same kind of link with:
+
+```sh
+treety link
+```
+
+The extension resolves the complete link through VS Code's `asExternalUri` API so it returns to the originating window. The link includes the configuration URI, node ID, and live terminal session ID. Clicking it reveals and focuses that exact native terminal and clears its attention marker. It does not start a stopped terminal, run a supplied command, load an arbitrary configuration, or change the workspace.
+
+Use the returned string unchanged as a notification's URL or Markdown target. For example, a shell integration can prepare a message after a task finishes:
+
+```sh
+treety attention set
+terminal_link="$(treety link)"
+printf '[Return to terminal](%s)\n' "$terminal_link"
+```
+
+`TREETY_TERMINAL_LINK` contains the same opaque URL for tools that read environment variables directly. `treety link` only targets its own hosted terminal and rejects node/configuration selectors. To link to another terminal, use its **Copy terminal link** action. Ordinary VS Code terminals have the bundled CLI but do not have a TreeTY session link. Terminals created before this feature need to be recreated once.
+
+Links currently support local desktop VS Code, including Insiders. A recovered native session keeps its link across extension-host reloads. Closing or restarting the terminal ends that session, so open it and copy a new link. If the original window has closed, VS Code may deliver an old link to another window. TreeTY rejects it unless that window has the exact loaded configuration, node, and live session. Missing, deleted, and invalid targets produce an error without launching anything.
+
+Some notification clients restrict custom URL schemes. They must allow the VS Code application URL for this integration to open. Link generation is optional: if VS Code cannot resolve a URL, the terminal still opens and `treety link` explains that no link is available.

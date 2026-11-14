@@ -21,6 +21,7 @@ import {
   treeTYConfigSourceEnvironmentName,
   treeTYNodeIdEnvironmentName,
   treeTYSessionIdEnvironmentName,
+  treeTYTerminalLinkEnvironmentName,
   setTreeNodeAttention,
   setTreeNodeMetadataPath,
   updateTreeNode,
@@ -160,6 +161,10 @@ export async function runCli(
 
     if (commandName === "attention") {
       return await runAttentionCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "link") {
+      return runLinkCommand(treeConfigCommandContext);
     }
 
     if (commandName === "current") {
@@ -601,6 +606,28 @@ async function runAttentionCommand(
   context.runCliOptions.output.writeOutput(
     `${attentionCommandName === "set" ? "Set" : "Cleared"} attention for ${nodeId} in ${context.treeConfigFilePath}`,
   );
+
+  return 0;
+}
+
+function runLinkCommand(context: TreeConfigCommandContext): number {
+  assertAllowedOptions(context.parsedCommandArguments, []);
+  assertNoCommandArguments(context.parsedCommandArguments, 1, "link");
+
+  if (context.parsedCommandArguments.terminalCommandArguments.length > 0) {
+    throw new Error("The link command does not accept terminal command arguments.");
+  }
+
+  const terminalLink =
+    context.runCliOptions.environment[treeTYTerminalLinkEnvironmentName];
+
+  if (!terminalLink) {
+    throw new Error(
+      "This terminal has no VS Code link. Open or recreate a TreeTY terminal in a local VS Code window, or use Copy terminal link in TreeTY.",
+    );
+  }
+
+  context.runCliOptions.output.writeOutput(terminalLink);
 
   return 0;
 }
@@ -1208,6 +1235,7 @@ Usage:
   treety attention set [node-id]
   treety attention clear [node-id]
   treety current
+  treety link
   treety config path
 
 Node options:
@@ -1231,6 +1259,10 @@ Configure-only options:
   --clear-metadata             Remove node metadata
   --clear-command              Remove a terminal startup command
   -- <command> [args...]       Set a terminal startup command
+
+Terminal links:
+  treety link prints this live terminal session's VS Code link without opening it.
+  It requires a TreeTY terminal in local VS Code and does not accept target selectors.
 
 Target selection:
   --node <node-id>             Target a node explicitly

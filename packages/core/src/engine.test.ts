@@ -238,3 +238,193 @@ test.test("reconciles node changes without replacing live sessions", async () =>
     shellSessionId,
   );
 });
+
+test.test("concurrent opens share one pending native terminal launch", async () => {
+  let finishCreation: (() => void) | undefined;
+  const creationReady = new Promise<void>((resolve) => {
+    finishCreation = resolve;
+  });
+  let creationCount = 0;
+
+  class DeferredTerminalHost extends FakeTerminalHost {
+    public override async createSession(
+      terminalLaunchRequest: TerminalLaunchRequest,
+    ): Promise<HostedTerminalSession> {
+      creationCount += 1;
+      await creationReady;
+
+      return await super.createSession(terminalLaunchRequest);
+    }
+  }
+
+  const terminalHost = new DeferredTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  const firstOpen = treeTYEngine.openTerminal("shell");
+  const secondOpen = treeTYEngine.openTerminal("shell");
+
+  await Promise.resolve();
+
+  assert.equal(creationCount, 1);
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "starting");
+  finishCreation?.();
+  await Promise.all([firstOpen, secondOpen]);
+
+  assert.equal(terminalHost.terminalLaunchRequests.length, 1);
+  assert.deepEqual(terminalHost.revealedSessionIds, ["session-1", "session-1"]);
+});
+
+test.test("failed concurrent creation releases the pending launch for retry", async () => {
+  let creationCount = 0;
+
+  class FailingTerminalHost extends FakeTerminalHost {
+    public override async createSession(
+      terminalLaunchRequest: TerminalLaunchRequest,
+    ): Promise<HostedTerminalSession> {
+      creationCount += 1;
+
+      if (creationCount === 1) throw new Error("launch failed");
+
+      return await super.createSession(terminalLaunchRequest);
+    }
+  }
+
+  const terminalHost = new FailingTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+  await assert.rejects(Promise.all([
+    treeTYEngine.openTerminal("shell"),
+    treeTYEngine.openTerminal("shell"),
+  ]), /launch failed/);
+  assert.equal(creationCount, 1);
+
+  await treeTYEngine.openTerminal("shell");
+
+  assert.equal(creationCount, 2);
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").hostSessionId, "session-1");
+});
+
+test.test("stop, removal, and disposal cancel pending launches and close late host sessions", async () => {
+  for (const cancellationAction of ["stop", "remove", "dispose"] as const) {
+    let finishCreation: (() => void) | undefined;
+    const creationReady = new Promise<void>((resolve) => {
+      finishCreation = resolve;
+    });
+    let launchSignal: AbortSignal | undefined;
+
+    class DeferredTerminalHost extends FakeTerminalHost {
+      public override async createSession(
+        terminalLaunchRequest: TerminalLaunchRequest,
+      ): Promise<HostedTerminalSession> {
+        launchSignal = terminalLaunchRequest.signal;
+        await creationReady;
+
+        // A host may not support cancellation. The engine must close its late session.
+        return await super.createSession(terminalLaunchRequest);
+      }
+    }
+
+    const terminalHost = new DeferredTerminalHost();
+    const treeTYEngine = new TreeTYEngine({
+      ...resolvedTreeConfig,
+      tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+    }, terminalHost);
+
+    await treeTYEngine.start();
+
+    const terminalOpen = treeTYEngine.openTerminal("shell");
+
+    await Promise.resolve();
+
+    if (cancellationAction === "stop") treeTYEngine.stopTerminal("shell");
+    if (cancellationAction === "remove") {
+      await treeTYEngine.reconcile({ ...resolvedTreeConfig, tree: [] });
+    }
+    if (cancellationAction === "dispose") treeTYEngine.dispose();
+
+    assert.equal(launchSignal?.aborted, true);
+    finishCreation?.();
+    await terminalOpen;
+
+    assert.deepEqual(terminalHost.closedSessionIds, ["session-1"]);
+    assert.deepEqual(terminalHost.revealedSessionIds, []);
+
+    if (cancellationAction === "stop") {
+      assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "stopped");
+    }
+    if (cancellationAction === "remove") {
+      assert.throws(() => treeTYEngine.getTerminalSessionState("shell"), /does not exist/);
+    }
+  }
+});
+
+test.test("restart replaces a pending generation without reattaching its late session", async () => {
+  let finishFirstCreation: (() => void) | undefined;
+  const firstCreationReady = new Promise<void>((resolve) => {
+    finishFirstCreation = resolve;
+  });
+  let creationCount = 0;
+
+  class DeferredTerminalHost extends FakeTerminalHost {
+    public override async createSession(
+      terminalLaunchRequest: TerminalLaunchRequest,
+    ): Promise<HostedTerminalSession> {
+      creationCount += 1;
+
+      if (creationCount === 1) await firstCreationReady;
+
+      return await super.createSession(terminalLaunchRequest);
+    }
+  }
+
+  const terminalHost = new DeferredTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  const terminalOpen = treeTYEngine.openTerminal("shell");
+
+  await Promise.resolve();
+  await treeTYEngine.restartTerminal("shell");
+  finishFirstCreation?.();
+  await terminalOpen;
+
+  assert.equal(creationCount, 2);
+  assert.deepEqual(terminalHost.revealedSessionIds, ["session-1"]);
+  assert.deepEqual(terminalHost.closedSessionIds, ["session-2"]);
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").hostSessionId, "session-1");
+});
+
+test.test("stop after native creation closes the session before pending launch reveals it", async () => {
+  const terminalHost = new FakeTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  treeTYEngine.subscribe((terminalSessionState) => {
+    if (terminalSessionState.status !== "idle") return;
+
+    treeTYEngine.stopTerminal(terminalSessionState.nodeId);
+  });
+
+  await treeTYEngine.openTerminal("shell");
+
+  assert.deepEqual(terminalHost.closedSessionIds, ["session-1"]);
+  assert.deepEqual(terminalHost.revealedSessionIds, []);
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "stopped");
+});
