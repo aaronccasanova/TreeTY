@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 
 import { showCommandError, TreeTYController } from "./controller";
 import { configureTerminalEnvironment } from "./terminal-environment";
+import { handleTerminalLink, TerminalLinkManager } from "./terminal-links";
 import { TreeTYTreeProvider } from "./tree-provider";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 
@@ -10,7 +11,14 @@ export async function activate(
 ): Promise<void> {
   configureTerminalEnvironment(extensionContext);
 
-  const treeTYController = new TreeTYController();
+  const terminalLinks = new TerminalLinkManager({
+    extensionId: extensionContext.extension.id,
+    uriScheme: vscode.env.uriScheme,
+    remoteName: vscode.env.remoteName,
+    resolveExternalUri: async (uri) =>
+      (await vscode.env.asExternalUri(vscode.Uri.from(uri))).toString(),
+  });
+  const treeTYController = new TreeTYController(terminalLinks);
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
   const treeTYTreeView = vscode.window.createTreeView("treety.terminals", {
     treeDataProvider: treeTYTreeProvider,
@@ -82,6 +90,11 @@ export async function activate(
         treeTYController.openTerminal(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.copyTerminalLink",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.copyTerminalLink(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
       "treety.restartTerminal",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.restartTerminal(nodeTreeEntry),
@@ -113,7 +126,27 @@ export async function activate(
     ),
   );
 
-  await treeTYController.start();
+  const startup = treeTYController.start();
+
+  extensionContext.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: async (uri) => {
+        try {
+          await handleTerminalLink({
+            startup,
+            terminalLinks,
+            uri,
+            revealTerminalLink: (target) =>
+              treeTYController.revealTerminalLink(target),
+          });
+        } catch (error) {
+          showCommandError(error);
+        }
+      },
+    }),
+  );
+
+  await startup;
 }
 
 export function deactivate(): void {}

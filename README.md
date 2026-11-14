@@ -103,6 +103,12 @@ npx skills add aaronccasanova/TreeTY --skill treety
 
 Add `--global` to make the skill available across projects. The installer can target Codex, Claude Code, Cursor, and other compatible agents.
 
+## Terminal links
+
+Use **Copy terminal link** on a running TreeTY terminal, or run `treety link` inside it, to get a URL for notifications and other clickable messages. VS Code routes the link to its originating window. TreeTY validates the configuration, node, and live session before focusing the native terminal and clearing attention. A stale link never launches a replacement process.
+
+Local desktop VS Code and Insiders are supported. Links survive extension reloads when the same native session is recovered. Closing or restarting the terminal requires a new link. Keep the returned URL unchanged. See [notification examples and lifecycle details](packages/vscode/README.md#link-to-a-live-terminal).
+
 ## CLI
 
 The VS Code extension includes the `treety` executable and exposes it in new integrated terminals. Prefer this copy when working in VS Code, as it comes from the same source revision as the extension. The packages keep independent release versions.
@@ -230,7 +236,7 @@ Use `metadata set-path` and `metadata clear-path` for targeted JSON Pointer upda
 
 Environment values inherit and merge. A `null` value removes the variable from the launched terminal environment.
 
-Host adapters inject a standard terminal context built by `@treety/core`: `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID`. The CLI uses this context to target the active config and leaf without positional arguments. Explicit `--global`, `--config`, positional IDs, and `--node` selectors take precedence. `TREETY_SESSION_ID` identifies one runtime terminal instance and can change when that terminal is recreated; `TREETY_NODE_ID` remains stable. Metadata in the environment is a launch-time snapshot, while `treety metadata get` reads the current configuration.
+Host adapters inject a standard terminal context built by `@treety/core`: `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, `TREETY_SESSION_ID`, and optional `TREETY_TERMINAL_LINK`. The CLI uses this context to target the active config and leaf without positional arguments. Explicit `--global`, `--config`, positional IDs, and `--node` selectors take precedence. `TREETY_SESSION_ID` identifies one runtime terminal instance and can change when that terminal is recreated; `TREETY_NODE_ID` remains stable. Metadata in the environment is a launch-time snapshot, while `treety metadata get` reads the current configuration.
 
 ## VS Code workflow
 

@@ -15,6 +15,8 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import type { TerminalLinkManager } from "./terminal-links";
+
 interface TerminalMetadata {
   sessionId: string;
   nodeId: string;
@@ -34,6 +36,7 @@ export class VscodeTerminalHost implements TerminalHost {
     private readonly workspaceId: string,
     private readonly configFilePath: string,
     private readonly configSource: "global" | "workspace",
+    private readonly terminalLinks: TerminalLinkManager,
   ) {
     this.vscodeDisposables = [
       vscode.window.onDidCloseTerminal((terminal) =>
@@ -72,12 +75,27 @@ export class VscodeTerminalHost implements TerminalHost {
     terminalLaunchRequest: TerminalLaunchRequest,
   ): Promise<HostedTerminalSession> {
     const sessionId = crypto.randomUUID();
+    let terminalLink: string | undefined;
+
+    try {
+      terminalLink = await this.terminalLinks.createTerminalLink({
+        configUri: vscode.Uri.file(this.configFilePath).toString(),
+        nodeId: terminalLaunchRequest.nodeId,
+        sessionId,
+      });
+    } catch {
+      // Link resolution is optional. An unavailable link must not prevent terminal launch.
+    }
+
+    terminalLaunchRequest.signal?.throwIfAborted();
+
     const terminalOptions = buildTerminalOptions(
       terminalLaunchRequest,
       sessionId,
       this.workspaceId,
       this.configFilePath,
       this.configSource,
+      terminalLink,
     );
     const terminal = vscode.window.createTerminal(terminalOptions);
 
@@ -96,7 +114,7 @@ export class VscodeTerminalHost implements TerminalHost {
       throw new Error(`VS Code terminal session "${hostSessionId}" was not found.`);
     }
 
-    terminal.show();
+    terminal.show(false);
   }
 
   public closeSession(hostSessionId: string): void {
@@ -196,6 +214,7 @@ function buildTerminalOptions(
   workspaceId: string,
   configFilePath: string,
   configSource: "global" | "workspace",
+  terminalLink?: string,
 ): vscode.TerminalOptions {
   const terminalOptions: vscode.TerminalOptions = {
     name: `TreeTY: ${terminalLaunchRequest.name}`,
@@ -208,6 +227,7 @@ function buildTerminalOptions(
         nodeId: terminalLaunchRequest.nodeId,
         metadata: terminalLaunchRequest.metadata,
         sessionId,
+        terminalLink,
       }),
       [workspaceIdEnvironmentName]: workspaceId,
     },

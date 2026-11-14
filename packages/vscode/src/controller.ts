@@ -31,6 +31,8 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import { revealTerminalLink } from "./terminal-links";
+import type { TerminalLinkManager, TerminalLinkTarget } from "./terminal-links";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 import { VscodeTerminalHost } from "./vscode-terminal-host";
 import type {
@@ -135,7 +137,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public readonly onDidChangeWorkspaceModels =
     this.workspaceModelChangeEmitter.event;
 
-  public constructor() {
+  public constructor(private readonly terminalLinks: TerminalLinkManager) {
     const workspaceConfigFileWatcher = vscode.workspace.createFileSystemWatcher(
       `**/${configDirName}/${configFileName}`,
     );
@@ -440,6 +442,11 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       });
 
       nodeActionQuickPickItems.push({
+        execute: () => this.copyTerminalLink(nodeTreeEntry),
+        label: "$(link) Copy terminal link",
+      });
+
+      nodeActionQuickPickItems.push({
         execute: () => this.restartTerminal(nodeTreeEntry),
         label: "$(debug-restart) Restart terminal",
       });
@@ -519,6 +526,59 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       nodeTreeEntry.treeNode.id,
     );
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+  }
+
+  public async copyTerminalLink(nodeTreeEntry: NodeTreeEntry): Promise<void> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+
+    const terminalSessionState = this.getTerminalSessionState(
+      nodeTreeEntry.workspaceModel,
+      nodeTreeEntry.treeNode.id,
+    );
+    const sessions =
+      await nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessions();
+    const session = sessions.find(
+      (candidateSession) =>
+        candidateSession.id === terminalSessionState.hostSessionId &&
+        candidateSession.nodeId === nodeTreeEntry.treeNode.id,
+    );
+
+    if (!session) {
+      throw new Error("Open this terminal before copying its link.");
+    }
+
+    const terminalLink = await this.terminalLinks.createTerminalLink({
+      configUri: nodeTreeEntry.workspaceModel.configFileUri.toString(),
+      nodeId: nodeTreeEntry.treeNode.id,
+      sessionId: session.id,
+    });
+
+    await vscode.env.clipboard.writeText(terminalLink);
+    vscode.window.setStatusBarMessage("TreeTY: Terminal link copied", 3000);
+  }
+
+  public async revealTerminalLink(target: TerminalLinkTarget): Promise<void> {
+    await this.workspaceReloadPromise;
+    await revealTerminalLink({
+      target,
+      workspaceModels: this.workspaceModels,
+      validateTerminal: async (nodeTreeEntry) => {
+        const treeConfig = parseTreeConfigContent(
+          new TextDecoder().decode(
+            await vscode.workspace.fs.readFile(
+              nodeTreeEntry.workspaceModel.configFileUri,
+            ),
+          ),
+        );
+        const treeNode = getTreeNode(treeConfig, target.nodeId);
+
+        if (treeNode?.kind !== "terminal") {
+          throw new Error("This terminal no longer exists in its tree. Copy a link from an existing terminal.");
+        }
+      },
+      clearAttention: (nodeTreeEntry) =>
+        this.setTerminalAttention(nodeTreeEntry, false),
+    });
   }
 
   public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -862,6 +922,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         workspaceModelLocation.id,
         workspaceModelLocation.configFileUri.fsPath,
         workspaceModelLocation.configSource,
+        this.terminalLinks,
       );
       const treeTYEngine = new TreeTYEngine(
         resolvedTreeConfig,

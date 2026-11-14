@@ -42,6 +42,7 @@
     "shells"
   ],
   "activationEvents": [
+    "onUri",
     "onStartupFinished",
     "onView:treety.terminals",
     "onCommand:treety.initializeWorkspace",
@@ -164,6 +165,12 @@
         "title": "Add Directory to VS Code Workspace...",
         "category": "TreeTY",
         "icon": "$(folder-library)"
+      },
+      {
+        "command": "treety.copyTerminalLink",
+        "title": "Copy terminal link",
+        "category": "TreeTY",
+        "icon": "$(link)"
       }
     ],
     "configuration": {
@@ -371,6 +378,11 @@
           "command": "treety.addDirectoryToWorkspace",
           "when": "view == treety.terminals && (viewItem == treetyGroup || viewItem =~ /^treetyTerminal/)",
           "group": "workspace@1"
+        },
+        {
+          "command": "treety.copyTerminalLink",
+          "when": "view == treety.terminals && viewItem =~ /^treetyTerminal/",
+          "group": "session@4"
         }
       ],
       "commandPalette": [
@@ -421,6 +433,10 @@
         {
           "command": "treety.addDirectoryToWorkspace",
           "when": "false"
+        },
+        {
+          "command": "treety.copyTerminalLink",
+          "when": "false"
         }
       ]
     }
@@ -429,7 +445,7 @@
     "build": "pnpm run check && node ../../scripts/build-vscode-extension.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "package": "node ../../scripts/package-vscode-extension.mjs",
-    "test": "pnpm run build && esbuild src/terminal-environment.test.ts --bundle --platform=node --format=cjs --outfile=dist/terminal-environment.test.js && node --test dist/terminal-environment.test.js test/bundled-cli.test.mjs"
+    "test": "pnpm run build && esbuild src/*.test.ts --bundle --platform=node --format=cjs --outdir=dist/tests && node --test dist/tests/*.test.js test/bundled-cli.test.mjs"
   },
   "dependencies": {
     "@treety/cli": "workspace:*",

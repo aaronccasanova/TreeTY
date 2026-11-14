@@ -96,6 +96,12 @@ treety show
 `TREETY_NODE_ID` supplies the default node target. A positional node ID or `--node <node-id>` takes precedence. Outside a TreeTY terminal, pass a node ID explicitly.
 `treety current` also reports the config source and `TREETY_SESSION_ID` when the host provides them. The session ID identifies the runtime terminal instance and can change when the terminal is recreated. The node ID remains stable.
 
+## Link to the current VS Code terminal
+
+Inside a TreeTY terminal in local desktop VS Code, run `treety link` to print its opaque live-session URL. Pass that exact string to a notification or link target. Do not decode, rebuild, or add parameters to it. The command accepts no node or configuration selectors and does not open the URL.
+
+The link reveals and focuses the same live native terminal and clears attention. It does not launch a stopped terminal. Recovered sessions retain their links across extension reloads. Closing or restarting the terminal requires a new link. Use **Copy terminal link** on another running terminal when that is the desired target. `TREETY_TERMINAL_LINK` exposes the same URL to integrations.
+
 ## Add groups and terminals
 
 Add a root group:

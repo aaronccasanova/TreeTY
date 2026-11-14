@@ -12,6 +12,7 @@ import {
   treeTYConfigSourceEnvironmentName,
   treeTYNodeIdEnvironmentName,
   treeTYSessionIdEnvironmentName,
+  treeTYTerminalLinkEnvironmentName,
 } from "@treety/core";
 
 import { runCli } from "./cli";
@@ -37,6 +38,44 @@ test.test("reports the CLI package version", async () => {
     );
     assert.deepEqual(capturedOutput.messages, [cliPackageConfig.version]);
     assert.deepEqual(capturedOutput.errors, []);
+  }
+});
+
+test.test("prints the current terminal's opaque link without interpreting its query", async () => {
+  const terminalLink = "vscode-insiders://treety.treety/open?nodeId%3Da%2526b%26sessionId%3Dlive%26windowId%3D4";
+  const capturedOutput = createCapturedOutput();
+
+  assert.equal(await runCli(["link"], {
+    environment: { [treeTYTerminalLinkEnvironmentName]: terminalLink },
+    output: capturedOutput.output,
+  }), 0);
+  assert.deepEqual(capturedOutput.messages, [terminalLink]);
+  assert.deepEqual(capturedOutput.errors, []);
+});
+
+test.test("link fails without host context and refuses selectors or extra arguments", async () => {
+  const capturedOutput = createCapturedOutput();
+
+  assert.equal(await runCli(["link"], {
+    environment: {},
+    output: capturedOutput.output,
+  }), 1);
+  assert.match(capturedOutput.errors[0] ?? "", /no VS Code link/);
+
+  for (const cliArguments of [
+    ["link", "other-node"],
+    ["link", "--", "other-command"],
+    ["link", "--node", "other-node"],
+    ["link", "--global"],
+    ["link", "--config", "/other/tree.json"],
+  ]) {
+    const rejectedOutput = createCapturedOutput();
+
+    assert.equal(await runCli(cliArguments, {
+      environment: { [treeTYTerminalLinkEnvironmentName]: "opaque-host-link" },
+      output: rejectedOutput.output,
+    }), 1);
+    assert.deepEqual(rejectedOutput.messages, []);
   }
 });
 

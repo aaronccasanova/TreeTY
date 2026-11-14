@@ -46,6 +46,12 @@ TreeTY marks sessions as stopped, starting, idle, running, or failed. VS Code te
 
 Attention is a separate durable boolean. A terminal that needs attention receives a small `!` decoration with the tooltip `Needs attention`; ancestor groups receive the same decoration while descendants need attention. Opening or revealing the terminal clears it without changing the lifecycle icon or status description.
 
+## Use terminal links
+
+**Copy terminal link** is available on running terminals through their actions and context menus. TreeTY uses `vscode.env.asExternalUri` on the full configuration/node/session target so VS Code can route it to the originating window. `treety link` prints the injected `TREETY_TERMINAL_LINK` unchanged from inside that terminal.
+
+Links currently support local desktop windows. The handler waits for TreeTY startup, validates the loaded configuration and latest terminal definition, and requires the exact live session before focusing it. It never loads a new config or starts a terminal. Closed/restarted sessions, deleted nodes, unrelated windows, and remote windows fail safely. Recovered native sessions retain their links across extension reloads. A terminal created before this feature needs to be recreated once, or its current link can be copied from the UI.
+
 ## Connect Explorer and Source Control
 
 `TreeTY: Explorer Directory Sync` controls whether opening a terminal adds its configured project directory to the VS Code workspace:

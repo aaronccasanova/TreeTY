@@ -14,6 +14,7 @@ export interface TerminalLaunchRequest {
   metadata?: JsonValue;
   shell?: TerminalShellConfig;
   command?: TerminalCommandConfig;
+  signal?: AbortSignal;
 }
 
 export interface HostedTerminalSession {
