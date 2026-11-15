@@ -363,9 +363,6 @@ function buildTerminalTreeItem(
     nodeTreeEntry.treeNode.name,
     vscode.TreeItemCollapsibleState.None,
   );
-  const showStatusDescriptions = vscode.workspace
-    .getConfiguration("treety")
-    .get<boolean>("showStatusDescriptions", true);
   const terminalAttentionContext = nodeTreeEntry.workspaceModel.treeState.nodes[
     nodeTreeEntry.treeNode.id
   ]?.needsAttention
@@ -393,9 +390,9 @@ function buildTerminalTreeItem(
     terminalPresentation.icon,
     terminalPresentation.color ? new vscode.ThemeColor(terminalPresentation.color) : undefined,
   );
-  terminalTreeItem.description = showStatusDescriptions
-    ? terminalPresentation.description
-    : undefined;
+  terminalTreeItem.accessibilityInformation = {
+    label: `${nodeTreeEntry.treeNode.name}, status: ${terminalSessionState.status}, activity: ${terminalActivity.state}`,
+  };
   terminalTreeItem.tooltip = buildTerminalTooltip(
     nodeTreeEntry,
     terminalSessionState,

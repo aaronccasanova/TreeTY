@@ -187,11 +187,6 @@
           "default": true,
           "description": "Ask for confirmation before closing a live TreeTY terminal."
         },
-        "treety.showStatusDescriptions": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show terminal status and current activity beside terminal names."
-        },
         "treety.explorerDirectorySync": {
           "type": "string",
           "enum": [
@@ -231,7 +226,7 @@
           "default": "auto",
           "enumDescriptions": [
             "Animate known work after one second.",
-            "Keep static status dots while preserving activity text and attention."
+            "Keep static status dots while preserving activity information and attention."
           ],
           "description": "Controls the activity spinner in the TreeTY tree. Each terminal can override this in Configure. Also disables animation when terminal tab animation is off or workbench.reduceMotion is on."
         }
