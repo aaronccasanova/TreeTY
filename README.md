@@ -52,8 +52,9 @@ Reload VS Code and create new terminals afterward. This fallback reuses `artifac
 - Load workspace trees from `.treety/tree.json` alongside a separately manageable global tree.
 - Manage tree structure from either the VS Code tree or the `treety` command.
 - Serialize tree and local-state mutations with cooperative locks and atomic replacement.
-- Persist terminal attention separately from terminal lifecycle status.
-- Resume linked Pi and Codex sessions through optional agent integrations.
+- Show theme-aware status dots, delayed native activity, and independent attention.
+- Track shell command completion and explicit activity reports with per-terminal animation controls.
+- Resume linked Pi and Codex sessions through optional integrations.
 - Optionally add explicitly configured project directories to VS Code Explorer and Source Control.
 
 ## Architecture
@@ -163,7 +164,7 @@ You can create the global file with `TreeTY: Initialize Global Tree` or `treety 
   state.json
 ```
 
-`state.json` records boolean `needsAttention` values by terminal node ID. Default values are omitted, deleted node IDs are pruned during later mutations, and the scoped `.treety/.gitignore` excludes state, lock, and temporary files. A custom config such as `review.json` uses `review.state.json` in the same directory.
+`state.json` records `needsAttention` values and registered runtime sessions by terminal node ID. Activity is scoped to each runtime session, while attention belongs to the persistent node. Default values are omitted, deleted node IDs are pruned during later mutations, and the scoped `.treety/.gitignore` excludes state, lock, and temporary files. A custom config such as `review.json` uses `review.state.json` in the same directory.
 
 ```json
 {
@@ -252,7 +253,7 @@ Terminal rows open or reveal their native terminal when selected. Hover controls
 
 Move uses a searchable, collapsible representation of the tree with inline controls on each destination. The tree starts fully expanded. As in the TreeTY sidebar, its top-right collapse control first collapses groups while keeping the root open, then collapses the root on the next click. When no top-level groups are expanded, it closes the root immediately. The collapse and expand controls clear any active search. The expand control opens every group. Insert above or below any node, or move inside a root or group. The editor stays to one row per node and supports terminals, whole groups, and cross-group moves. Watched configuration changes reconcile only the affected tree. Existing sessions survive moves, renames, metadata changes, and launch-setting changes. Removed leaves close their matching sessions.
 
-Attention is independent from stopped, starting, idle, running, and failed lifecycle states. `treety attention set` or **Mark needs attention** from the terminal's VS Code actions gear or right-click menu adds a small `!` decoration to a terminal and its ancestor groups. Both menus also offer **Clear attention**. Opening or revealing that terminal clears it automatically.
+Attention is independent from stopped, starting, idle, running, and failed status. Known activity displays a native spinner after one second. Ordinary shell commands lasting at least five seconds mark completion attention, and explicit reporters can supply their own activity and completion signal. Configure animation globally with `treety.activityAnimation` or per terminal through **Configure > Activity animation**. See [status, activity, and attention](packages/vscode/README.md#status-activity-and-attention) for shell integration requirements and accessibility settings. `treety attention set` or **Mark needs attention** from the terminal's VS Code actions gear or right-click menu adds a small `!` decoration to a terminal and its ancestor groups. Both menus also offer **Clear attention**. Opening or revealing that terminal clears it automatically.
 
 ## Pi integration
 
@@ -268,9 +269,9 @@ You can also install this repository as a Pi package:
 pi install git:github.com/aaronccasanova/TreeTY
 ```
 
-Run `/treety-link` inside a TreeTY terminal. `/treety-setup` remains a compatibility alias for the same Pi command. The TypeScript extension in `packages/pi` stores the current ID from Pi's session manager at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi reads the current link from configuration on session startup and reload, clears attention on `agent_start`, and sets it on `agent_settled` or `session_compact`. The package defines only the small Pi API boundary it uses and does not install Pi locally. TreeTY core, CLI state, and VS Code rendering remain agent-agnostic. The repository extension composes their generic capabilities.
+Run `/treety-link` inside a TreeTY terminal. `/treety-setup` remains a compatibility alias for the same Pi command. The TypeScript extension in `packages/pi` stores the current ID from Pi's session manager at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi reads the current link from configuration on session startup and reload, registers itself as an activity reporter, and signals busy during a turn or manual compaction. Busy clears attention atomically. Final `agent_settled` or successful manual compaction signals idle with attention. Waiting for input remains idle. See the [Pi integration](packages/pi/README.md) for retries, prompts, compaction, and cleanup behavior. The package defines only the small Pi API boundary it uses and does not install Pi locally. Tool-specific behavior stays in this integration. The core, CLI, and host consume generic activity reports.
 
-Run `/treety-unlink` to remove the current session association and its exact resume command written by `/treety-link` while keeping the terminal, working directory, unrelated settings, and saved Pi history. A custom replacement startup command is preserved. The operation is repeat-safe, refuses another session's link, and stops lifecycle attention signaling for the unlinked session. Update the CLI alongside the Pi extension, as unlink uses guarded configuration updates to protect concurrent edits.
+Run `/treety-unlink` to remove the current session association and its exact resume command written by `/treety-link` while keeping the terminal, working directory, unrelated settings, and saved Pi history. A custom replacement startup command is preserved. The operation is repeat-safe, refuses another session's link, and stops activity and attention signaling for the unlinked session. Update the CLI alongside the Pi extension, as unlink uses guarded configuration updates to protect concurrent edits.
 
 ## Codex integration
 

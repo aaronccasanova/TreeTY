@@ -212,20 +212,20 @@ test.test("sets commands and updates metadata paths without replacing siblings",
   const treeConfigWithSession = setTreeNodeMetadataPath(
     treeConfig,
     "shell",
-    "/integrations/pi/sessionId",
+    "/integrations/example/sessionId",
     "session-123",
   );
   const configuredTreeConfig = updateTreeNode(treeConfigWithSession, {
     nodeId: "shell",
     command: {
-      executable: "pi",
+      executable: "example-tool",
       args: ["--session", "session-123"],
     },
   });
   const clearedTreeConfig = clearTreeNodeMetadataPath(
     configuredTreeConfig,
     "shell",
-    "/integrations/pi/sessionId",
+    "/integrations/example/sessionId",
   );
   const clearedCommandTreeConfig = updateTreeNode(clearedTreeConfig, {
     nodeId: "shell",
@@ -235,7 +235,7 @@ test.test("sets commands and updates metadata paths without replacing siblings",
   assert.deepEqual(configuredTreeConfig.tree[0]?.metadata, {
     owner: "platform",
     integrations: {
-      pi: {
+      example: {
         sessionId: "session-123",
       },
     },
@@ -245,14 +245,14 @@ test.test("sets commands and updates metadata paths without replacing siblings",
       ? configuredTreeConfig.tree[0].command
       : undefined,
     {
-      executable: "pi",
+      executable: "example-tool",
       args: ["--session", "session-123"],
     },
   );
   assert.deepEqual(clearedTreeConfig.tree[0]?.metadata, {
     owner: "platform",
     integrations: {
-      pi: {},
+      example: {},
     },
   });
   assert.equal(

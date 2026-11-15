@@ -67,7 +67,7 @@ nodeTest.test("does not index environment, commands, integration data, or arbitr
     command: { executable: "hiddencommand", args: ["commandsecret"] },
     metadata: {
       token: "metadatasecret",
-      integrations: { codex: { sessionId: "sessionsecret" } },
+      integrations: { example: { sessionId: "sessionsecret" } },
       unknown: "arbitrarysecret",
       labels: { token: "nestedsecret" },
       tags: ["safe-tag", { secret: "arraysecret" }],
@@ -120,7 +120,7 @@ nodeTest.test("ignores invalid workspaces and bounds query and metadata work", (
 
 nodeTest.test("benchmarks responsive searches across 192 realistic groups and terminals", (testContext) => {
   const groupNames = ["Payments", "Accounts", "Dashboard", "Identity", "Catalog", "Notifications", "Analytics", "Infrastructure", "Mobile", "Documentation", "Delivery", "Research"];
-  const terminalNames = ["Development server", "Service tests", "Integration tests", "Database shell", "Migration runner", "Log viewer", "Production review", "Release checks", "Background worker", "API explorer", "Agent session", "Repository shell", "Type checker", "Build watcher", "Performance profile"];
+  const terminalNames = ["Development server", "Service tests", "Integration tests", "Database shell", "Migration runner", "Log viewer", "Production review", "Release checks", "Background worker", "API explorer", "Interactive session", "Repository shell", "Type checker", "Build watcher", "Performance profile"];
   const tree: TreeNodeConfig[] = groupNames.map((groupName, groupIndex) => ({
     kind: "group", id: `group-${groupIndex}`, name: groupName,
     children: terminalNames.map((terminalName, terminalIndex) => ({

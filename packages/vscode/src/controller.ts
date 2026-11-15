@@ -169,7 +169,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         if (
           configurationChangeEvent.affectsConfiguration(
             "treety.showStatusDescriptions",
-          )
+          ) ||
+          configurationChangeEvent.affectsConfiguration("treety.activityAnimation") ||
+          configurationChangeEvent.affectsConfiguration("terminal.integrated.tabs.enableAnimation") ||
+          configurationChangeEvent.affectsConfiguration("workbench.reduceMotion")
         ) {
           this.workspaceModelChangeEmitter.fire({ kind: "tree" });
         }
@@ -337,6 +340,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
             : "Inherited",
           propertyName: "env",
         },
+        ...(treeNodeConfig.kind === "terminal" ? [{
+          label: "$(loading) Activity animation",
+          description: treeNodeConfig.activityAnimation === undefined
+            ? "Use global setting" : treeNodeConfig.activityAnimation ? "Automatic" : "Off",
+          propertyName: "activityAnimation" as const,
+        }] : []),
         {
           label: "$(json) Metadata",
           description:
@@ -426,7 +435,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       const terminalNeedsAttention = Boolean(
         nodeTreeEntry.workspaceModel.treeState.nodes[
           nodeTreeEntry.treeNode.id
-        ],
+        ]?.needsAttention,
       );
 
       nodeActionQuickPickItems.push({
@@ -613,7 +622,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
     const terminalNeedsAttention = Boolean(
-      nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id],
+      nodeTreeEntry.workspaceModel.treeState.nodes[nodeTreeEntry.treeNode.id]?.needsAttention,
     );
 
     if (terminalNeedsAttention === needsAttention) return;
@@ -790,6 +799,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     workspaceModel.treeConfig = treeConfig;
     workspaceModel.treeState = treeState;
     workspaceModel.resolvedTreeConfig = resolvedTreeConfig;
+    workspaceModel.vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
 
     if (changedFileKind === "config") {
       this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
@@ -923,6 +933,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         workspaceModelLocation.configFileUri.fsPath,
         workspaceModelLocation.configSource,
         this.terminalLinks,
+      );
+      vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
+      vscodeTerminalHost.onDidChangeActivity((nodeId) =>
+        this.workspaceModelChangeEmitter.fire({
+          kind: "terminal", workspaceId: workspaceModelLocation.id, nodeIds: [nodeId],
+        }),
       );
       const treeTYEngine = new TreeTYEngine(
         resolvedTreeConfig,
@@ -1228,8 +1244,20 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private async getConfiguredTreeNodeUpdate(
     nodeTreeEntry: NodeTreeEntry,
     treeNodeConfig: TreeNodeConfig,
-    propertyName: "cwd" | "env" | "metadata" | "projectDir" | "restartPolicy",
+    propertyName: "activityAnimation" | "cwd" | "env" | "metadata" | "projectDir" | "restartPolicy",
   ): Promise<Omit<UpdateTreeNodeOptions, "nodeId"> | undefined> {
+    if (propertyName === "activityAnimation") {
+      const activityAnimationItem = await vscode.window.showQuickPick([
+        { label: "Use global setting", activityAnimation: null },
+        { label: "Automatic", activityAnimation: true },
+        { label: "Off", activityAnimation: false },
+      ], { title: "Activity animation", placeHolder: "Status, activity text, and attention remain available" });
+
+      if (!activityAnimationItem) return undefined;
+
+      return { activityAnimation: activityAnimationItem.activityAnimation };
+    }
+
     if (propertyName === "restartPolicy") {
       const restartPolicyItem = await vscode.window.showQuickPick(
         [

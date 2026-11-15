@@ -49,6 +49,7 @@ export interface TreeTerminalConfig extends TreeNodeDefaults {
   name: string;
   metadata?: JsonValue;
   command?: TerminalCommandConfig;
+  activityAnimation?: boolean;
 }
 
 export type TreeNodeConfig = TreeGroupConfig | TreeTerminalConfig;
@@ -79,6 +80,7 @@ export interface ResolvedTreeGroup extends ResolvedTreeNodeBase {
 export interface ResolvedTreeTerminal extends ResolvedTreeNodeBase {
   kind: "terminal";
   needsAttention: boolean;
+  activityAnimation?: boolean;
   command?: TerminalCommandConfig;
 }
 
@@ -97,8 +99,21 @@ export interface TerminalSessionState {
   exitCode?: number;
 }
 
+export interface TreeNodeActivity {
+  sessionId: string;
+  reporterId: string;
+  processId: number;
+  state: "busy" | "idle";
+  metadataPath?: string;
+}
+
+export interface TreeNodeSessionState {
+  activity?: TreeNodeActivity;
+}
+
 export interface TreeNodeState {
-  needsAttention: true;
+  needsAttention?: true;
+  sessions?: Record<string, TreeNodeSessionState>;
 }
 
 export interface TreeState {

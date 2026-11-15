@@ -4,10 +4,11 @@ import { getTreeNodeNeedsAttention } from "@treety/core";
 import type {
   ResolvedTreeNode,
   TerminalSessionState,
-  TerminalStatus,
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import type { TerminalActivity } from "./terminal-activity";
+import { getTerminalPresentation } from "./terminal-presentation";
 import type {
   ConfiguredWorkspaceModel,
   WorkspaceModel,
@@ -84,7 +85,10 @@ export class TreeTYTreeProvider
         treeEntry.treeNode.id,
       );
 
-    return buildTerminalTreeItem(treeEntry, terminalSessionState);
+    return buildTerminalTreeItem(
+      treeEntry, terminalSessionState,
+      treeEntry.workspaceModel.vscodeTerminalHost.getSessionActivity(terminalSessionState.hostSessionId),
+    );
   }
 
   public getChildren(treeEntry?: TreeEntry): TreeEntry[] {
@@ -353,6 +357,7 @@ function buildGroupTreeItem(nodeTreeEntry: NodeTreeEntry): vscode.TreeItem {
 function buildTerminalTreeItem(
   nodeTreeEntry: NodeTreeEntry,
   terminalSessionState: TerminalSessionState,
+  terminalActivity: TerminalActivity,
 ): vscode.TreeItem {
   const terminalTreeItem = new vscode.TreeItem(
     nodeTreeEntry.treeNode.name,
@@ -363,7 +368,7 @@ function buildTerminalTreeItem(
     .get<boolean>("showStatusDescriptions", true);
   const terminalAttentionContext = nodeTreeEntry.workspaceModel.treeState.nodes[
     nodeTreeEntry.treeNode.id
-  ]
+  ]?.needsAttention
     ? "needsAttention"
     : "clearAttention";
 
@@ -373,13 +378,28 @@ function buildTerminalTreeItem(
     nodeTreeEntry.treeNode.id,
   );
   terminalTreeItem.contextValue = `treetyTerminal.${terminalSessionState.status}.${terminalAttentionContext}`;
-  terminalTreeItem.iconPath = getTerminalStatusIcon(terminalSessionState.status);
+  const terminalPresentation = getTerminalPresentation({
+    status: terminalSessionState.status,
+    activity: terminalActivity,
+    animationEnabled: (nodeTreeEntry.treeNode.kind === "terminal"
+      ? nodeTreeEntry.treeNode.activityAnimation : undefined) ??
+      vscode.workspace.getConfiguration("treety").get<string>("activityAnimation", "auto") !== "off",
+    terminalAnimationEnabled: vscode.workspace.getConfiguration("terminal.integrated.tabs")
+      .get("enableAnimation", true),
+    reduceMotion: vscode.workspace.getConfiguration("workbench").get<string>("reduceMotion", "auto") === "on",
+  });
+
+  terminalTreeItem.iconPath = new vscode.ThemeIcon(
+    terminalPresentation.icon,
+    terminalPresentation.color ? new vscode.ThemeColor(terminalPresentation.color) : undefined,
+  );
   terminalTreeItem.description = showStatusDescriptions
-    ? terminalSessionState.status
+    ? terminalPresentation.description
     : undefined;
   terminalTreeItem.tooltip = buildTerminalTooltip(
     nodeTreeEntry,
     terminalSessionState,
+    terminalActivity,
   );
   terminalTreeItem.command = {
     command: "treety.openTerminal",
@@ -393,6 +413,7 @@ function buildTerminalTreeItem(
 function buildTerminalTooltip(
   nodeTreeEntry: NodeTreeEntry,
   terminalSessionState: TerminalSessionState,
+  terminalActivity: TerminalActivity,
 ): string {
   const workspaceDirPath =
     nodeTreeEntry.workspaceModel.resolvedTreeConfig.workspaceDirPath;
@@ -400,6 +421,7 @@ function buildTerminalTooltip(
     path.relative(workspaceDirPath, nodeTreeEntry.treeNode.cwd) || ".";
   const tooltipLines = [
     `Status: ${terminalSessionState.status}`,
+    `Activity: ${terminalActivity.state}`,
     `Working directory: ${nodeTreeEntry.treeNode.cwd}`,
     `Relative directory: ${terminalDirName}`,
     `Node ID: ${nodeTreeEntry.treeNode.id}`,
@@ -455,35 +477,6 @@ function buildNodeTooltip(nodeTreeEntry: NodeTreeEntry): string {
   }
 
   return tooltipLines.join("\n");
-}
-
-function getTerminalStatusIcon(terminalStatus: TerminalStatus): vscode.ThemeIcon {
-  if (terminalStatus === "starting") {
-    return new vscode.ThemeIcon("loading~spin");
-  }
-
-  if (terminalStatus === "running") {
-    return new vscode.ThemeIcon(
-      "debug-start",
-      new vscode.ThemeColor("testing.iconPassed"),
-    );
-  }
-
-  if (terminalStatus === "idle") {
-    return new vscode.ThemeIcon(
-      "terminal",
-      new vscode.ThemeColor("charts.green"),
-    );
-  }
-
-  if (terminalStatus === "failed") {
-    return new vscode.ThemeIcon(
-      "error",
-      new vscode.ThemeColor("problemsErrorIcon.foreground"),
-    );
-  }
-
-  return new vscode.ThemeIcon("circle-outline");
 }
 
 function getNodeTreeItemId(nodeTreeEntry: NodeTreeEntry): string {

@@ -195,7 +195,7 @@ Use `--clear-cwd`, `--clear-project-dir`, `--clear-shell`, or `--clear-restart-p
 Set or clear an existing terminal's startup command:
 
 ```sh
-treety configure <node-id> -- pi --session <session-id>
+treety configure <node-id> -- pnpm build
 treety configure <node-id> --clear-command
 ```
 
@@ -235,6 +235,12 @@ The CLI serializes tree and state changes with shared cooperative locks and atom
 
 ## Link or unlink a Pi session
 
-Install the repository Pi package with `pi install git:github.com/aaronccasanova/TreeTY`, then run `/treety-link` inside the target TreeTY terminal. `/treety-setup` remains a compatibility alias for `/treety-link`. The TypeScript extension in `packages/pi` stores the current ID from Pi's session manager through `metadata set-path`, sets `pi --session <session-id>` through `configure`, leaves `restartPolicy` unchanged, and maps `agent_start` and `agent_settled` to generic attention commands. It reads current configuration to recover the link during Pi session startup and reload. The extension defines a minimal local Pi API boundary and does not install Pi as a package dependency.
+Install the repository Pi package with `pi install git:github.com/aaronccasanova/TreeTY`, then run `/treety-link` inside the target TreeTY terminal. `/treety-setup` remains a compatibility alias for `/treety-link`. The TypeScript extension in `packages/pi` stores the current ID from Pi's session manager through `metadata set-path`, sets `pi --session <session-id>` through `configure`, leaves `restartPolicy` unchanged, and uses the generic activity protocol: register on link or recovery, busy during a turn or manual compaction, and idle with attention on final `agent_settled` or successful manual compaction. Busy clears attention atomically. It reads current configuration to recover the link during Pi session startup and reload. The extension defines a minimal local Pi API boundary and does not install Pi as a package dependency.
 
-Run `/treety-unlink` inside the linked Pi session to remove its session ID metadata and exact resume command written by `/treety-link`. It preserves the terminal node, live terminal, working directory, unrelated metadata/settings, and saved Pi history. Custom replacement startup commands remain unchanged, another session's association is refused, and repeated use is harmless. Unlink disables lifecycle attention signaling for that session without clearing existing attention markers. Run `/treety-link` to opt back in. Update the CLI alongside the Pi extension: unlink uses `treety configure --if-node <node-json>` to reject concurrent edits before modifying configuration.
+Run `/treety-unlink` inside the linked Pi session to remove its session ID metadata and exact resume command written by `/treety-link`. It preserves the terminal node, live terminal, working directory, unrelated metadata/settings, and saved Pi history. Custom replacement startup commands remain unchanged, another session's association is refused, and repeated use is harmless. Unlink unregisters activity and disables subsequent activity and attention signaling for that session without clearing existing attention markers. Run `/treety-link` to opt back in. Update the CLI alongside the Pi extension: unlink uses `treety configure --if-node <node-json>` to reject concurrent edits before modifying configuration.
+
+## Activity reporting
+
+`treety activity <register|busy|idle|unregister> --reporter <id> --pid <process-id>` reports current work from a process inside a registered TreeTY terminal. `TREETY_SESSION_ID` identifies the host's terminal runtime, not a POSIX session. The reporter ID is an opaque integration instance identifier. The PID identifies the reporting process. Use `--metadata-path /integrations/example/sessionId` when the reporter must match current metadata. Register creates an idle reporter and replaces any previous reporter for that runtime. Busy clears attention, and idle accepts `--attention set` or `--attention clear`. Unregister removes only the matching reporter and preserves attention. Registration operations are separate from busy/idle work states. These states are TreeTY conventions, not operating-system scheduling states. The protocol reports work without running a process or controlling a live terminal.
+
+`treety configure <node-id> --activity-animation off` disables the terminal's spinner while preserving activity and attention. Use `on` to enable it or `--clear-activity-animation` to use the global preference. Keep the CLI and host on matching versions to preserve runtime state fields.

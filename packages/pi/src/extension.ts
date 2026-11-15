@@ -1,12 +1,10 @@
-const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
-const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
-
 interface PiSessionManager {
   getSessionId(): string;
 }
 
 interface PiExtensionContext {
   cwd: string;
+  isIdle(): boolean;
   sessionManager: PiSessionManager;
 }
 
@@ -35,8 +33,14 @@ interface PiSessionUnlinkResult {
 type PiEventName =
   | "agent_settled"
   | "agent_start"
+  | "before_agent_start"
+  | "session_before_compact"
   | "session_compact"
-  | "session_start";
+  | "session_compact_failed"
+  | "session_shutdown"
+  | "session_start"
+  | "ui_prompt_end"
+  | "ui_prompt_start";
 
 interface PiExtensionAPI {
   exec(command: string, commandArguments: string[]): Promise<PiCommandResult>;
@@ -50,10 +54,16 @@ interface PiExtensionAPI {
   registerCommand(commandName: string, command: PiCommand): void;
 }
 
+const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
+const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
+const treeTYSessionIdEnvironmentName = "TREETY_SESSION_ID";
+const piSessionMetadataPath = "/integrations/pi/sessionId";
+
 export default function registerTreeTYExtension(
   extensionAPI: PiExtensionAPI,
 ): void {
-  let attentionSignalingEnabled = false;
+  let linkedPiSessionId: string | undefined;
+  let uiPromptActive = false;
   let pendingOperation = Promise.resolve();
 
   const runSerializedOperation = (operation: () => Promise<void>): Promise<void> => {
@@ -64,35 +74,57 @@ export default function registerTreeTYExtension(
     return nextOperation;
   };
 
+  const runLinkedOperation = (
+    extensionContext: PiExtensionContext,
+    operation: (piSessionId: string) => Promise<void>,
+  ): Promise<void> => {
+    // Capture before queueing: Pi can replace its session while an operation waits.
+    const piSessionId = extensionContext.sessionManager.getSessionId();
+
+    return runSerializedOperation(async () => {
+      if (linkedPiSessionId !== piSessionId) return;
+
+      await operation(piSessionId);
+    });
+  };
+
   const linkCommand: PiCommand = {
     description: "Link this Pi session to the current TreeTY terminal",
-    handler: (_commandArguments, commandContext) => runSerializedOperation(async () => {
-      assertTreeTYEnvironment(process.env);
-
+    handler: (_commandArguments, commandContext) => {
       const piSessionId = commandContext.sessionManager.getSessionId();
 
-      await runTreeTYCommand(extensionAPI, [
-        "configure",
-        "--cwd",
-        commandContext.cwd,
-        "--",
-        "pi",
-        "--session",
-        piSessionId,
-      ]);
-      await runTreeTYCommand(extensionAPI, [
-        "metadata",
-        "set-path",
-        "/integrations/pi/sessionId",
-        JSON.stringify(piSessionId),
-      ]);
+      return runSerializedOperation(async () => {
+        assertTreeTYEnvironment(process.env);
 
-      attentionSignalingEnabled = true;
-      commandContext.ui.notify(
-        "TreeTY will resume this Pi session and signal when it needs attention.",
-        "info",
-      );
-    }),
+        await runTreeTYCommand(extensionAPI, [
+          "configure",
+          "--cwd",
+          commandContext.cwd,
+          "--",
+          "pi",
+          "--session",
+          piSessionId,
+        ]);
+        await runTreeTYCommand(extensionAPI, [
+          "metadata",
+          "set-path",
+          piSessionMetadataPath,
+          JSON.stringify(piSessionId),
+        ]);
+        await signalTreeTYActivity(extensionAPI, piSessionId, "register");
+
+        linkedPiSessionId = piSessionId;
+
+        if (!commandContext.isIdle() && !uiPromptActive) {
+          await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
+        }
+
+        commandContext.ui.notify(
+          "TreeTY will resume this Pi session and show its activity and attention state.",
+          "info",
+        );
+      });
+    },
   };
 
   extensionAPI.registerCommand("treety-link", linkCommand);
@@ -103,55 +135,107 @@ export default function registerTreeTYExtension(
 
   extensionAPI.registerCommand("treety-unlink", {
     description: "Unlink this Pi session while keeping the TreeTY terminal",
-    handler: (_commandArguments, commandContext) => runSerializedOperation(async () => {
-      assertTreeTYEnvironment(process.env, "/treety-unlink");
+    handler: (_commandArguments, commandContext) => {
+      const piSessionId = commandContext.sessionManager.getSessionId();
 
-      const piSessionUnlinkResult = await unlinkPiSession(extensionAPI, commandContext);
+      return runSerializedOperation(async () => {
+        assertTreeTYEnvironment(process.env, "/treety-unlink");
 
-      attentionSignalingEnabled = false;
+        const piSessionUnlinkResult = await unlinkPiSession(extensionAPI, piSessionId);
 
-      const notification = piSessionUnlinkResult.changed
-        ? "Unlinked this Pi session. The terminal and saved conversation are preserved."
-        : "This Pi session is already unlinked from this TreeTY terminal.";
+        linkedPiSessionId = undefined;
+        await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
 
-      commandContext.ui.notify(
-        piSessionUnlinkResult.preservedCommand
-          ? `${notification} The custom startup command was left unchanged.`
-          : notification,
-        "info",
-      );
-    }),
+        const notification = piSessionUnlinkResult.changed
+          ? "Unlinked this Pi session. The terminal and saved conversation are preserved."
+          : "This Pi session is already unlinked from this TreeTY terminal.";
+
+        commandContext.ui.notify(
+          piSessionUnlinkResult.preservedCommand
+            ? `${notification} The custom startup command was left unchanged.`
+            : notification,
+          "info",
+        );
+      });
+    },
   });
 
-  extensionAPI.on("session_start", (_event, extensionContext) => runSerializedOperation(async () => {
-    attentionSignalingEnabled = false;
-
-    if (!getEnvironmentIsTreeTY(process.env)) return;
-
+  extensionAPI.on("session_start", (_event, extensionContext) => {
     const piSessionId = extensionContext.sessionManager.getSessionId();
 
-    // Launch-time metadata can still describe a link removed in this terminal.
-    const treeTYNodeMetadataContent = await getTreeTYNodeMetadataContent(extensionAPI);
+    return runSerializedOperation(async () => {
+      const previousPiSessionId = linkedPiSessionId;
 
-    attentionSignalingEnabled = getSessionIsLinked(piSessionId, treeTYNodeMetadataContent);
+      linkedPiSessionId = undefined;
+      uiPromptActive = false;
+
+      if (!getEnvironmentIsTreeTY(process.env)) return;
+
+      if (previousPiSessionId && previousPiSessionId !== piSessionId) {
+        await signalTreeTYActivity(extensionAPI, previousPiSessionId, "unregister");
+      }
+
+      // Launch-time metadata can still describe a link removed in this terminal.
+      const treeTYNodeMetadataContent = await getTreeTYNodeMetadataContent(extensionAPI);
+
+      if (!getSessionIsLinked(piSessionId, treeTYNodeMetadataContent)) return;
+
+      await signalTreeTYActivity(extensionAPI, piSessionId, "register");
+      linkedPiSessionId = piSessionId;
+
+      if (!extensionContext.isIdle()) {
+        await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
+      }
+    });
+  });
+
+  for (const eventName of ["before_agent_start", "agent_start", "session_before_compact"] as const) {
+    extensionAPI.on(eventName, (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+      if (uiPromptActive) return;
+
+      await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
+    }));
+  }
+
+  extensionAPI.on("agent_settled", (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+    // Older Pi releases allow an earlier settled handler to start another run.
+    if (!extensionContext.isIdle()) return;
+
+    await signalTreeTYActivity(extensionAPI, piSessionId, "idle", "set");
   }));
 
-  extensionAPI.on("agent_start", () => runSerializedOperation(async () => {
-    if (!attentionSignalingEnabled) return;
+  for (const eventName of ["session_compact", "session_compact_failed"] as const) {
+    extensionAPI.on(eventName, (event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+      // Automatic compaction belongs to the run and must wait for agent_settled.
+      if (!getValueIsRecord(event) || event["reason"] !== "manual") return;
 
-    await runTreeTYCommand(extensionAPI, ["attention", "clear"]);
+      // Failed compaction clears its flag first, so another handler may have started a run.
+      if (eventName === "session_compact_failed" && !extensionContext.isIdle()) return;
+
+      // Pi emits manual success before ctx.isIdle() becomes true.
+      const attention = eventName === "session_compact" ? "set" : undefined;
+
+      await signalTreeTYActivity(extensionAPI, piSessionId, "idle", attention);
+    }));
+  }
+
+  extensionAPI.on("ui_prompt_start", (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+    uiPromptActive = true;
+    await signalTreeTYActivity(extensionAPI, piSessionId, "idle");
   }));
 
-  extensionAPI.on("agent_settled", () => runSerializedOperation(async () => {
-    if (!attentionSignalingEnabled) return;
+  extensionAPI.on("ui_prompt_end", (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+    uiPromptActive = false;
 
-    await runTreeTYCommand(extensionAPI, ["attention", "set"]);
+    if (extensionContext.isIdle()) return;
+
+    await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
   }));
 
-  extensionAPI.on("session_compact", () => runSerializedOperation(async () => {
-    if (!attentionSignalingEnabled) return;
-
-    await runTreeTYCommand(extensionAPI, ["attention", "set"]);
+  extensionAPI.on("session_shutdown", (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
+    linkedPiSessionId = undefined;
+    uiPromptActive = false;
+    await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
   }));
 }
 
@@ -191,7 +275,7 @@ export function getSessionIsLinked(
 
 async function unlinkPiSession(
   extensionAPI: PiExtensionAPI,
-  commandContext: PiCommandContext,
+  piSessionId: string,
 ): Promise<PiSessionUnlinkResult> {
   const treeTYNodeResult = await runTreeTYCommand(extensionAPI, ["show"]);
   const treeTYNode = JSON.parse(treeTYNodeResult.stdout) as unknown;
@@ -200,7 +284,6 @@ async function unlinkPiSession(
     throw new Error("/treety-unlink requires a TreeTY terminal leaf.");
   }
 
-  const piSessionId = commandContext.sessionManager.getSessionId();
   const metadata = treeTYNode["metadata"];
   const integrations = getValueIsRecord(metadata) ? metadata["integrations"] : undefined;
   const piIntegration = getValueIsRecord(integrations) ? integrations["pi"] : undefined;
@@ -243,8 +326,31 @@ async function unlinkPiSession(
 function getEnvironmentIsTreeTY(environment: NodeJS.ProcessEnv): boolean {
   return Boolean(
     environment[treeTYConfigFileEnvironmentName] &&
-      environment[treeTYNodeIdEnvironmentName],
+      environment[treeTYNodeIdEnvironmentName] &&
+      environment[treeTYSessionIdEnvironmentName],
   );
+}
+
+async function signalTreeTYActivity(
+  extensionAPI: PiExtensionAPI,
+  piSessionId: string,
+  action: "register" | "busy" | "idle" | "unregister",
+  attention?: "set",
+): Promise<void> {
+  const activityArguments = [
+    "activity",
+    action,
+    "--reporter",
+    piSessionId,
+    "--pid",
+    String(process.pid),
+    "--metadata-path",
+    piSessionMetadataPath,
+  ];
+
+  if (attention) activityArguments.push("--attention", attention);
+
+  await runTreeTYCommand(extensionAPI, activityArguments);
 }
 
 async function getTreeTYNodeMetadataContent(

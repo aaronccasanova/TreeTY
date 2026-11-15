@@ -6,6 +6,8 @@ import * as test from "node:test";
 
 import {
   parseTreeConfigContent,
+  registerTreeNodeSession,
+  loadTreeStateFile,
   getTreeStateFilePath,
   parseTreeStateContent,
   treeTYConfigFileEnvironmentName,
@@ -258,8 +260,8 @@ test.test("targets the current terminal through its injected environment", async
         [
           "metadata",
           "set-path",
-          "/integrations/pi/sessionId",
-          '"pi-session-123"',
+          "/integrations/example/sessionId",
+          '"example-session-123"',
         ],
         runCliOptions,
       ),
@@ -267,7 +269,7 @@ test.test("targets the current terminal through its injected environment", async
     );
     assert.equal(
       await runCli(
-        ["configure", "--", "pi", "--session", "pi-session-123"],
+        ["configure", "--", "example-tool", "--session", "example-session-123"],
         runCliOptions,
       ),
       0,
@@ -290,16 +292,16 @@ test.test("targets the current terminal through its injected environment", async
       owner: "platform",
       tags: ["cli"],
       integrations: {
-        pi: {
-          sessionId: "pi-session-123",
+        example: {
+          sessionId: "example-session-123",
         },
       },
     });
     assert.deepEqual(
       shellNode?.kind === "terminal" ? shellNode.command : undefined,
       {
-        executable: "pi",
-        args: ["--session", "pi-session-123"],
+        executable: "example-tool",
+        args: ["--session", "example-session-123"],
       },
     );
     assert.deepEqual(
@@ -324,7 +326,7 @@ test.test("targets the current terminal through its injected environment", async
     );
     assert.equal(
       await runCli(
-        ["metadata", "clear-path", "/integrations/pi/sessionId"],
+        ["metadata", "clear-path", "/integrations/example/sessionId"],
         runCliOptions,
       ),
       0,
@@ -487,7 +489,7 @@ test.test("configure guards the complete node snapshot and applies all changes t
     assert.equal(await runCli([
       "add", "terminal", "Shell", "--id", "shell", "--cwd", "/workspace",
       "--metadata", '{"owner":"platform","sessionId":"session-1"}',
-      "--", "pi", "--session", "session-1",
+      "--", "example-tool", "--session", "session-1",
     ], runCliOptions), 0);
     assert.equal(await runCli([
       "add", "terminal", "Other", "--id", "other",
@@ -622,3 +624,110 @@ function createCapturedOutput(): CapturedOutput {
     },
   };
 }
+
+test.test("reports guarded activity with terminal context and atomic attention", async () => {
+  const temporaryDirPath = await fs.mkdtemp(path.join(os.tmpdir(), "treety-cli-activity-"));
+  const treeConfigFilePath = path.join(temporaryDirPath, ".treety", "tree.json");
+  const capturedOutput = createCapturedOutput();
+  const runCliOptions = {
+    currentDirPath: temporaryDirPath,
+    environment: {
+      [treeTYNodeIdEnvironmentName]: "shell",
+      [treeTYSessionIdEnvironmentName]: "host-session",
+    },
+    homeDirPath: temporaryDirPath,
+    output: capturedOutput.output,
+  };
+  const reporterArguments = ["--reporter", "reporter", "--pid", "123", "--metadata-path", "/reporter"];
+
+  try {
+    assert.equal(await runCli(["init"], runCliOptions), 0);
+    assert.equal(await runCli([
+      "add", "terminal", "Shell", "--id", "shell", "--metadata", '{"reporter":"reporter"}',
+    ], runCliOptions), 0);
+    await registerTreeNodeSession(treeConfigFilePath, "shell", "host-session");
+
+    assert.equal(await runCli(["activity", "register", ...reporterArguments], runCliOptions), 0);
+    assert.equal(await runCli(["activity", "busy", ...reporterArguments], runCliOptions), 0);
+    assert.equal(await runCli(["activity", "idle", ...reporterArguments, "--attention", "set"], runCliOptions), 0);
+
+    const completedTreeState = await loadTreeStateFile(treeConfigFilePath);
+
+    assert.equal(completedTreeState.nodes.shell?.needsAttention, true);
+    assert.equal(completedTreeState.nodes.shell?.sessions?.["host-session"]?.activity?.state, "idle");
+    assert.equal(await runCli(["activity", "busy", ...reporterArguments], runCliOptions), 0);
+    assert.equal((await loadTreeStateFile(treeConfigFilePath)).nodes.shell?.needsAttention, undefined);
+    assert.equal(await runCli(["activity", "idle", ...reporterArguments, "--attention", "set"], runCliOptions), 0);
+    assert.equal(await runCli(["metadata", "clear"], runCliOptions), 0);
+    assert.equal(await runCli(["activity", "busy", ...reporterArguments], runCliOptions), 1);
+    assert.equal(await runCli(["activity", "unregister", ...reporterArguments], runCliOptions), 0);
+
+    assert.deepEqual((await loadTreeStateFile(treeConfigFilePath)).nodes.shell, {
+      needsAttention: true,
+      sessions: { "host-session": {} },
+    });
+
+    for (const invalidArguments of [
+      ["activity", "register", "--reporter", "reporter", "--pid", "0"],
+      ["activity", "register", "--reporter", "reporter", "--pid", "1.5"],
+      ["activity", "register", "--reporter", "reporter", "--pid", "1e3"],
+      ["activity", "register", "--reporter", "reporter", "--pid", "9007199254740992"],
+      ["activity", "register", "--reporter", "bad reporter", "--pid", "123"],
+      ["activity", "register", "--reporter", "reporter"],
+      ["activity", "running", ...reporterArguments],
+      ["activity", "register", ...reporterArguments, "--session", "stale"],
+      ["activity", "register", "--reporter", "reporter", "--pid", "123", "--session", "constructor"],
+      ["activity", "register", "--reporter", "reporter", "--pid", "123", "--session", "__proto__"],
+      ["activity", "busy", ...reporterArguments, "--attention", "set"],
+      ["activity", "idle", ...reporterArguments, "--attention", "true"],
+    ]) {
+      assert.equal(await runCli(invalidArguments, runCliOptions), 1, invalidArguments.join(" "));
+    }
+
+    assert.equal(await runCli(["activity", "register", ...reporterArguments], {
+      ...runCliOptions,
+      environment: { [treeTYNodeIdEnvironmentName]: "shell" },
+    }), 1);
+    assert.match(capturedOutput.errors.at(-1) ?? "", /TREETY_SESSION_ID/);
+  } finally {
+    await fs.rm(temporaryDirPath, { recursive: true, force: true });
+  }
+});
+
+test.test("configures and clears per-terminal activity animation", async () => {
+  const temporaryDirPath = await fs.mkdtemp(path.join(os.tmpdir(), "treety-cli-animation-"));
+  const treeConfigFilePath = path.join(temporaryDirPath, ".treety", "tree.json");
+  const capturedOutput = createCapturedOutput();
+  const runCliOptions = {
+    currentDirPath: temporaryDirPath,
+    environment: {},
+    homeDirPath: temporaryDirPath,
+    output: capturedOutput.output,
+  };
+
+  try {
+    assert.equal(await runCli(["init"], runCliOptions), 0);
+    assert.equal(await runCli(["add", "terminal", "Shell", "--id", "shell"], runCliOptions), 0);
+    assert.equal(await runCli(["add", "group", "Group", "--id", "group"], runCliOptions), 0);
+
+    for (const activityAnimation of ["off", "on"]) {
+      assert.equal(await runCli(["configure", "shell", "--activity-animation", activityAnimation], runCliOptions), 0);
+
+      const treeConfig = parseTreeConfigContent(await fs.readFile(treeConfigFilePath, "utf8"));
+      const terminal = treeConfig.tree[0];
+
+      assert.equal(terminal?.kind === "terminal" && terminal.activityAnimation, activityAnimation === "on");
+    }
+
+    assert.equal(await runCli(["configure", "shell", "--clear-activity-animation"], runCliOptions), 0);
+
+    const treeConfig = parseTreeConfigContent(await fs.readFile(treeConfigFilePath, "utf8"));
+
+    assert.equal("activityAnimation" in treeConfig.tree[0]!, false);
+    assert.equal(await runCli(["configure", "group", "--activity-animation", "off"], runCliOptions), 1);
+    assert.equal(await runCli(["configure", "shell", "--activity-animation", "false"], runCliOptions), 1);
+    assert.equal(await runCli(["configure", "shell", "--activity-animation", "off", "--clear-activity-animation"], runCliOptions), 1);
+  } finally {
+    await fs.rm(temporaryDirPath, { recursive: true, force: true });
+  }
+});

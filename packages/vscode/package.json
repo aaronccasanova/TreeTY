@@ -190,7 +190,7 @@
         "treety.showStatusDescriptions": {
           "type": "boolean",
           "default": true,
-          "description": "Show terminal lifecycle states beside terminal names."
+          "description": "Show terminal status and current activity beside terminal names."
         },
         "treety.explorerDirectorySync": {
           "type": "string",
@@ -221,6 +221,19 @@
           ],
           "default": "always",
           "description": "Controls when the global terminal tree appears in windows with open folders. Empty VS Code windows always show the global tree."
+        },
+        "treety.activityAnimation": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "off"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Animate known work after one second.",
+            "Keep static status dots while preserving activity text and attention."
+          ],
+          "description": "Controls the activity spinner in the TreeTY tree. Each terminal can override this in Configure. Also disables animation when terminal tab animation is off or workbench.reduceMotion is on."
         }
       }
     },
@@ -456,7 +469,7 @@
     "build": "pnpm run check && node ../../scripts/build-vscode-extension.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "package": "node ../../scripts/package-vscode-extension.mjs",
-    "test": "pnpm run build && esbuild src/*.test.ts --bundle --platform=node --format=cjs --outdir=dist/tests && node --test dist/tests/*.test.js test/bundled-cli.test.mjs"
+    "test": "pnpm run build && esbuild src/*.test.ts --bundle --platform=node --format=cjs --outdir=dist/tests && node --test dist/tests/*.test.js test/*.test.mjs"
   },
   "dependencies": {
     "@treety/cli": "workspace:*",

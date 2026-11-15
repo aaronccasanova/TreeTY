@@ -29,7 +29,7 @@ const piSessionId = "pi-session-123";
 const metadataReadCommand = ["treety", "metadata", "get"];
 
 for (const commandName of ["treety-link", "treety-setup"]) {
-  test.test(`${commandName} links session resume without PI_SESSION_ID and signals attention`, async () => {
+  test.test(`${commandName} links session resume without PI_SESSION_ID and signals activity and attention`, async () => {
     await withTreeTYExtension({}, async (extensionHarness) => {
       await extensionHarness.emitEvent("session_start", "startup");
       await extensionHarness.invokeCommand(commandName);
@@ -47,9 +47,10 @@ for (const commandName of ["treety-link", "treety-setup"]) {
           "treety", "metadata", "set-path", "/integrations/pi/sessionId",
           JSON.stringify(piSessionId),
         ],
-        ["treety", "attention", "clear"],
-        ["treety", "attention", "set"],
-        ["treety", "attention", "set"],
+        getActivityCommand("register"),
+        getActivityCommand("busy"),
+        getActivityCommand("idle", "set"),
+        getActivityCommand("idle", "set"),
       ]);
       assert.equal(extensionHarness.notifications.length, 1);
     });
@@ -70,8 +71,9 @@ test.test("reads current metadata for startup, reload, and resume", async () => 
       extensionHarness.treeTYCommands,
       Array.from({ length: 3 }, () => [
         metadataReadCommand,
-        ["treety", "attention", "clear"],
-        ["treety", "attention", "set"],
+        getActivityCommand("register"),
+        getActivityCommand("busy"),
+        getActivityCommand("idle", "set"),
       ]).flat(),
     );
 
@@ -114,7 +116,7 @@ test.test("unlink removes only the session link and exact resume command once", 
     await extensionHarness.invokeCommand("treety-unlink");
 
     assert.deepEqual(node, expectedNode);
-    assert.equal(extensionHarness.treeTYCommands.length, 2);
+    assert.equal(extensionHarness.treeTYCommands.length, 3);
     assert.deepEqual(extensionHarness.treeTYCommands[0], ["treety", "show"]);
 
     const configureCommand = extensionHarness.treeTYCommands[1]!;
@@ -200,7 +202,7 @@ test.test("unlink is harmless when neither session field belongs to this session
     await extensionHarness.invokeCommand("treety-unlink");
 
     assert.deepEqual(node, originalNode);
-    assert.deepEqual(extensionHarness.treeTYCommands, [["treety", "show"]]);
+    assert.deepEqual(extensionHarness.treeTYCommands, [["treety", "show"], getActivityCommand("unregister")]);
     assert.equal(extensionHarness.notifications.length, 1);
   });
 });
@@ -236,7 +238,7 @@ for (const failedCommand of ["show", "configure"]) {
 
       assert.deepEqual(node, originalNode);
       assert.deepEqual(extensionHarness.notifications, []);
-      assert.deepEqual(extensionHarness.treeTYCommands.at(-1), ["treety", "attention", "set"]);
+      assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
     });
   });
 }
@@ -284,7 +286,7 @@ test.test("lifecycle events cannot relink an unlinked session through stale laun
     await extensionHarness.invokeCommand("treety-link");
     await extensionHarness.emitEvent("agent_settled");
 
-    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), ["treety", "attention", "set"]);
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
   });
 });
 
@@ -322,7 +324,7 @@ test.test("unlink waits for a pending lifecycle read and prevents later attentio
 
     assert.deepEqual(
       extensionHarness.treeTYCommands.map((command) => command[1]),
-      ["metadata", "show", "configure", "metadata"],
+      ["metadata", "activity", "show", "configure", "activity", "metadata"],
     );
   });
 });
@@ -345,6 +347,161 @@ test.test("commands reject outside TreeTY and lifecycle events leave it alone", 
   });
 });
 
+test.test("keeps retries, tools, and automatic compaction busy until the full run settles", async () => {
+  await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    await extensionHarness.emitEvent("before_agent_start");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("agent_end");
+    await extensionHarness.emitEvent("session_before_compact", "overflow");
+    await extensionHarness.emitEvent("session_compact", "overflow");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("agent_end");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
+      getActivityCommand("register"),
+      getActivityCommand("busy"),
+      getActivityCommand("busy"),
+      getActivityCommand("busy"),
+      getActivityCommand("busy"),
+    ]);
+
+    await extensionHarness.emitEvent("agent_settled");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
+  });
+});
+
+for (const eventName of ["session_compact", "session_compact_failed"] as const) {
+  test.test(`manual ${eventName} returns idle at its documented lifecycle boundary`, async () => {
+    await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+      await extensionHarness.emitEvent("session_start");
+      await extensionHarness.emitEvent("session_before_compact", "manual");
+      await extensionHarness.emitEvent(eventName, {
+        reason: "manual", aborted: true, isIdle: eventName === "session_compact_failed",
+      });
+
+      assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
+        getActivityCommand("register"),
+        getActivityCommand("busy"),
+        getActivityCommand("idle", eventName === "session_compact" ? "set" : undefined),
+      ]);
+    });
+  });
+}
+
+test.test("manual compaction failure cannot idle a new run started by an earlier handler", async () => {
+  await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    await extensionHarness.emitEvent("session_before_compact", "manual");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("session_compact_failed", { reason: "manual", isIdle: false });
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("busy"));
+  });
+});
+
+test.test("an interrupted run settles idle, while an earlier handler's continuation stays busy", async () => {
+  await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("agent_settled", { isIdle: false });
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("busy"));
+
+    await extensionHarness.emitEvent("agent_settled", { aborted: true });
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
+  });
+});
+
+test.test("a blocking UI prompt waits idle and resumes busy without inventing completion attention", async () => {
+  await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("ui_prompt_start");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("ui_prompt_end");
+    await extensionHarness.emitEvent("agent_settled");
+    await extensionHarness.emitEvent("ui_prompt_start");
+    await extensionHarness.emitEvent("ui_prompt_end");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
+      getActivityCommand("register"),
+      getActivityCommand("busy"),
+      getActivityCommand("idle"),
+      getActivityCommand("busy"),
+      getActivityCommand("idle", "set"),
+      getActivityCommand("idle"),
+    ]);
+  });
+});
+
+for (const reason of ["quit", "reload", "new", "resume", "fork"]) {
+  test.test(`shutdown for ${reason} releases only its owned activity and disables later callbacks`, async () => {
+    await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+      await extensionHarness.emitEvent("session_start");
+      await extensionHarness.emitEvent("agent_start");
+      await extensionHarness.emitEvent("session_shutdown", reason);
+      await extensionHarness.emitEvent("agent_settled");
+      await extensionHarness.emitEvent("session_compact");
+      await extensionHarness.emitEvent("session_shutdown", reason);
+
+      assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
+        getActivityCommand("register"),
+        getActivityCommand("busy"),
+        getActivityCommand("unregister"),
+      ]);
+    });
+  });
+}
+
+test.test("relinking during an active turn immediately publishes busy", async () => {
+  await withTreeTYExtension({}, async (extensionHarness) => {
+    extensionHarness.setIsIdle(false);
+    await extensionHarness.invokeCommand("treety-link");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.slice(-2), [
+      getActivityCommand("register"),
+      getActivityCommand("busy"),
+    ]);
+  });
+});
+
+test.test("events from a different Pi session cannot signal the linked session's activity", async () => {
+  await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    extensionHarness.setSessionId("pi-session-replacement");
+    await extensionHarness.emitEvent("agent_start");
+    await extensionHarness.emitEvent("agent_settled");
+    await extensionHarness.emitEvent("session_shutdown");
+
+    assert.deepEqual(extensionHarness.treeTYCommands, [metadataReadCommand, getActivityCommand("register")]);
+  });
+});
+
+test.test("a missing TreeTY terminal session cannot configure or register activity", async () => {
+  await withTreeTYExtension({}, async (extensionHarness) => {
+    delete process.env.TREETY_SESSION_ID;
+
+    await assert.rejects(extensionHarness.invokeCommand("treety-link"), /inside a TreeTY terminal/);
+    await extensionHarness.emitEvent("session_start");
+
+    assert.deepEqual(extensionHarness.treeTYCommands, []);
+  });
+});
+
+function getActivityCommand(activity: "register" | "busy" | "idle" | "unregister", attention?: "set"): string[] {
+  const activityCommand = [
+    "treety", "activity", activity, "--reporter", piSessionId,
+    "--pid", String(process.pid), "--metadata-path", "/integrations/pi/sessionId",
+  ];
+
+  if (attention) activityCommand.push("--attention", attention);
+
+  return activityCommand;
+}
+
 async function withTreeTYExtension(
   options: ExtensionHarnessOptions,
   runTest: (extensionHarness: ReturnType<typeof createExtensionHarness>) => Promise<void>,
@@ -354,6 +511,7 @@ async function withTreeTYExtension(
   delete process.env.PI_SESSION_ID;
   process.env.TREETY_CONFIG_FILE = "/workspace/.treety/tree.json";
   process.env.TREETY_NODE_ID = "shell";
+  process.env.TREETY_SESSION_ID = "treety-session-123";
   delete process.env.TREETY_NODE_METADATA;
 
   try {
@@ -370,9 +528,11 @@ function createExtensionHarness(options: ExtensionHarnessOptions) {
   const notifications: string[] = [];
   const node = options.node ?? { kind: "terminal", id: "shell", name: "Shell" };
   let currentSessionId = piSessionId;
+  let isIdle = true;
 
   const extensionContext = {
     cwd: "/workspace/packages/pi",
+    isIdle: () => isIdle,
     sessionManager: { getSessionId: () => currentSessionId },
     ui: { notify: (message: string) => notifications.push(message) },
   };
@@ -390,6 +550,12 @@ function createExtensionHarness(options: ExtensionHarnessOptions) {
 
       if (commandArguments[0] === "metadata" && commandArguments[1] === "get") {
         return { code: 0, stderr: "", stdout: JSON.stringify(node.metadata ?? null) };
+      }
+
+      if (commandArguments[0] === "metadata" && commandArguments[1] === "set-path") {
+        node.metadata = {
+          integrations: { pi: { sessionId: JSON.parse(commandArguments[3]!) } },
+        };
       }
 
       if (commandArguments[0] === "configure" && commandArguments.includes("--if-node")) {
@@ -419,15 +585,41 @@ function createExtensionHarness(options: ExtensionHarnessOptions) {
     setSessionId: (sessionId: string) => {
       currentSessionId = sessionId;
     },
+    setIsIdle: (nextIsIdle: boolean) => {
+      isIdle = nextIsIdle;
+    },
     invokeCommand: async (commandName: string) => {
       const command = registeredCommands.get(commandName);
       assert.ok(command, `${commandName} must be registered`);
       await command.handler("", extensionContext);
     },
-    emitEvent: async (eventName: PiEventName, reason = "startup") => {
+    emitEvent: async (
+      eventName: PiEventName | "agent_end",
+      eventDetails: string | { reason?: string; aborted?: boolean; isIdle?: boolean } = {},
+    ) => {
+      if (eventName === "agent_end") {
+        assert.ok(!registeredEventHandlers.has(eventName as PiEventName));
+        return;
+      }
+
       const eventHandler = registeredEventHandlers.get(eventName);
+
       assert.ok(eventHandler, `${eventName} must be registered`);
-      await eventHandler({ type: eventName, reason }, extensionContext);
+
+      const event = typeof eventDetails === "string"
+        ? { type: eventName, reason: eventDetails }
+        : { type: eventName, reason: "manual", ...eventDetails };
+
+      if (["before_agent_start", "agent_start", "session_before_compact"].includes(eventName)) {
+        isIdle = false;
+      }
+
+      if (eventName === "agent_settled") isIdle = true;
+      if ("isIdle" in event && typeof event.isIdle === "boolean") isIdle = event.isIdle;
+
+      await eventHandler(event, extensionContext);
+
+      if (eventName.startsWith("session_compact") && event.reason === "manual") isIdle = true;
     },
   };
 }

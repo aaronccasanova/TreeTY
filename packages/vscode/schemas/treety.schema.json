@@ -212,6 +212,10 @@
             },
             "command": {
               "$ref": "#/$defs/command"
+            },
+            "activityAnimation": {
+              "type": "boolean",
+              "description": "Override TreeTY activity animation for this terminal. Status, activity text, and attention are preserved."
             }
           }
         }

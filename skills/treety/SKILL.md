@@ -1,6 +1,6 @@
 ---
 name: treety
-description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, order, annotate, signal attention for, or remove TreeTY groups and terminal leaves; coordinate independent terminal sessions through @treety/cli; link or unlink Pi sessions with /treety-link and /treety-unlink; work with tree.json and local state.json; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
+description: Manage and extend TreeTY hierarchical terminal workspaces. Use to inspect, create, configure, order, annotate, signal activity or attention for, or remove TreeTY groups and terminal leaves; coordinate independent terminal sessions through @treety/cli; link or unlink Pi sessions with /treety-link and /treety-unlink; work with tree.json and local state.json; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
 ---
 
 # TreeTY
@@ -9,7 +9,7 @@ Use TreeTY as a persistent control plane for terminal definitions. Keep the tree
 
 ## Route the task
 
-- Read [references/cli.md](references/cli.md) before inspecting or changing a tree from the command line. Prefer this surface for agent-driven management.
+- Read [references/cli.md](references/cli.md) before inspecting or changing a tree from the command line. Prefer this surface for scripted management.
 - Read [references/vscode.md](references/vscode.md) when the result must appear or run in VS Code, or when diagnosing configuration refresh, terminal persistence, Explorer sync, or session state.
 - Read [references/core.md](references/core.md) before importing `@treety/core`, changing the shared model, or implementing another host adapter.
 
@@ -31,7 +31,7 @@ Treat `remove --yes` and `init --force` as destructive. Confirm the resolved con
 - Use the CLI to manage local, global, or explicitly selected configuration files.
 - Use VS Code to create, reveal, restart, stop, and track native terminal sessions.
 - Use the core package for parsing, inheritance, transactional storage, immutable tree operations, local attention state, lifecycle orchestration, and host contracts.
-- Do not claim that the current CLI can attach to, reveal, stop, or restart a live terminal. It manages terminal definitions only.
+- Do not claim that the current CLI can attach to, reveal, stop, or restart a live terminal. It manages definitions and reports session-scoped activity and attention.
 - Do not invent an external terminal emulator integration. The current adapter launches native VS Code integrated terminals.
 
-When an agent should add a leaf and have VS Code launch it after the configuration reloads, use `--restart-policy onOpen`. With the default `manual` policy, the new leaf persists but waits for a user to open or restart it in VS Code.
+To add a leaf and have VS Code launch it after the configuration reloads, use `--restart-policy onOpen`. With the default `manual` policy, the new leaf persists but waits for a user to open or restart it in VS Code.
