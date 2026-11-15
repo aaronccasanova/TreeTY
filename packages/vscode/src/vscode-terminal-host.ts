@@ -2,6 +2,12 @@ import * as crypto from "node:crypto";
 
 import {
   buildTreeTYTerminalEnvironment,
+  clearTreeNodeSession,
+  getTreeNodeActivity,
+  loadTreeStateFile,
+  registerTreeNodeSession,
+  setTreeNodeActivity,
+  setTreeNodeAttention,
   treeTYNodeIdEnvironmentName,
   treeTYSessionIdEnvironmentName,
 } from "@treety/core";
@@ -12,9 +18,15 @@ import type {
   TerminalHostEvent,
   TerminalHostEventListener,
   TerminalLaunchRequest,
+  ResolvedTreeConfig,
+  ResolvedTreeNode,
+  TreeNodeActivity,
+  TreeState,
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import { TerminalActivityTracker } from "./terminal-activity";
+import type { TerminalActivity } from "./terminal-activity";
 import type { TerminalLinkManager } from "./terminal-links";
 
 interface TerminalMetadata {
@@ -23,12 +35,32 @@ interface TerminalMetadata {
   workspaceId: string;
 }
 
+interface SessionActivity {
+  nodeId: string;
+  tracker: TerminalActivityTracker;
+  explicitActivity?: TreeNodeActivity;
+}
+
 const workspaceIdEnvironmentName = "TREETY_WORKSPACE_ID";
 
 export class VscodeTerminalHost implements TerminalHost {
   private readonly terminalBySessionId = new Map<string, vscode.Terminal>();
 
   private readonly terminalHostEventListeners = new Set<TerminalHostEventListener>();
+
+  private readonly activityBySessionId = new Map<string, SessionActivity>();
+
+  private readonly activityChangeEmitter = new vscode.EventEmitter<string>();
+
+  public readonly onDidChangeActivity = this.activityChangeEmitter.event;
+
+  private treeNodes: ResolvedTreeNode[] = [];
+
+  private treeState: TreeState = { version: 1, nodes: {} };
+
+  private readonly reporterSessionIds = new Set<string>();
+
+  private reporterCheckTimer: ReturnType<typeof setTimeout> | undefined;
 
   private readonly vscodeDisposables: vscode.Disposable[];
 
@@ -61,14 +93,34 @@ export class VscodeTerminalHost implements TerminalHost {
         continue;
       }
 
+      if (!getTerminalNode(this.treeNodes, terminalMetadata.nodeId)) continue;
+
+      this.treeState = await registerTreeNodeSession(
+        this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId,
+      );
+      // Registration can wait for a file lock while the native terminal closes.
+      if (!vscode.window.terminals.includes(terminal) || terminal.exitStatus !== undefined) {
+        await clearTreeNodeSession(
+          this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId,
+        );
+
+        continue;
+      }
+
       this.terminalBySessionId.set(terminalMetadata.sessionId, terminal);
+      this.createSessionActivity(terminalMetadata.sessionId, terminalMetadata.nodeId);
       hostedTerminalSessions.push({
         id: terminalMetadata.sessionId,
         nodeId: terminalMetadata.nodeId,
       });
     }
 
-    return hostedTerminalSessions;
+    return hostedTerminalSessions.filter((hostedTerminalSession) => {
+      const terminal = this.terminalBySessionId.get(hostedTerminalSession.id);
+
+      return terminal !== undefined && vscode.window.terminals.includes(terminal) &&
+        terminal.exitStatus === undefined;
+    });
   }
 
   public async createSession(
@@ -97,9 +149,23 @@ export class VscodeTerminalHost implements TerminalHost {
       this.configSource,
       terminalLink,
     );
-    const terminal = vscode.window.createTerminal(terminalOptions);
+    this.treeState = await registerTreeNodeSession(
+      this.configFilePath, terminalLaunchRequest.nodeId, sessionId,
+    );
+
+    let terminal: vscode.Terminal;
+
+    try {
+      terminalLaunchRequest.signal?.throwIfAborted();
+      terminal = vscode.window.createTerminal(terminalOptions);
+    } catch (error) {
+      await clearTreeNodeSession(this.configFilePath, terminalLaunchRequest.nodeId, sessionId);
+
+      throw error;
+    }
 
     this.terminalBySessionId.set(sessionId, terminal);
+    this.createSessionActivity(sessionId, terminalLaunchRequest.nodeId);
 
     return {
       id: sessionId,
@@ -121,6 +187,15 @@ export class VscodeTerminalHost implements TerminalHost {
     const terminal = this.terminalBySessionId.get(hostSessionId);
 
     if (!terminal) return;
+
+    const terminalMetadata = getTerminalMetadata(terminal);
+
+    this.removeSessionActivity(hostSessionId);
+
+    if (terminalMetadata) {
+      void clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, hostSessionId)
+        .catch(reportActivityError);
+    }
 
     terminal.dispose();
   }
@@ -148,6 +223,14 @@ export class VscodeTerminalHost implements TerminalHost {
       vscodeDisposable.dispose();
     }
 
+    clearTimeout(this.reporterCheckTimer);
+
+    for (const sessionActivity of this.activityBySessionId.values()) {
+      sessionActivity.tracker.dispose();
+    }
+
+    this.activityBySessionId.clear();
+    this.activityChangeEmitter.dispose();
     this.terminalHostEventListeners.clear();
     this.terminalBySessionId.clear();
   }
@@ -160,6 +243,10 @@ export class VscodeTerminalHost implements TerminalHost {
     }
 
     this.terminalBySessionId.delete(terminalMetadata.sessionId);
+    this.removeSessionActivity(terminalMetadata.sessionId);
+    void clearTreeNodeSession(
+      this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId,
+    ).catch(reportActivityError);
     this.emitTerminalHostEvent({
       type: "closed",
       sessionId: terminalMetadata.sessionId,
@@ -177,6 +264,9 @@ export class VscodeTerminalHost implements TerminalHost {
       return;
     }
 
+    this.activityBySessionId.get(terminalMetadata.sessionId)?.tracker
+      .startShellExecution(terminalShellEvent.execution);
+
     this.emitTerminalHostEvent({
       type: "started",
       sessionId: terminalMetadata.sessionId,
@@ -193,11 +283,133 @@ export class VscodeTerminalHost implements TerminalHost {
       return;
     }
 
+    void this.finishShellActivity(terminalMetadata, terminalShellEvent.execution)
+      .catch(reportActivityError);
+
     this.emitTerminalHostEvent({
       type: "idle",
       sessionId: terminalMetadata.sessionId,
       nodeId: terminalMetadata.nodeId,
       exitCode: terminalShellEvent.exitCode,
+    });
+  }
+
+  public getSessionActivity(sessionId?: string): TerminalActivity {
+    return sessionId
+      ? this.activityBySessionId.get(sessionId)?.tracker.getActivity() ?? { state: "unknown", showSpinner: false }
+      : { state: "unknown", showSpinner: false };
+  }
+
+  public updateActivity(resolvedTreeConfig: ResolvedTreeConfig, treeState: TreeState): void {
+    this.treeNodes = resolvedTreeConfig.tree;
+    this.treeState = treeState;
+    this.refreshExplicitActivity();
+  }
+
+  private createSessionActivity(sessionId: string, nodeId: string): void {
+    if (this.activityBySessionId.has(sessionId)) return;
+
+    this.activityBySessionId.set(sessionId, {
+      nodeId,
+      tracker: new TerminalActivityTracker(() => this.activityChangeEmitter.fire(nodeId)),
+    });
+    this.refreshExplicitActivity();
+  }
+
+  private removeSessionActivity(sessionId: string): void {
+    this.activityBySessionId.get(sessionId)?.tracker.dispose();
+    this.activityBySessionId.delete(sessionId);
+    this.reporterSessionIds.delete(sessionId);
+  }
+
+  private refreshExplicitActivity(): void {
+    clearTimeout(this.reporterCheckTimer);
+    this.reporterCheckTimer = undefined;
+    this.reporterSessionIds.clear();
+
+    for (const [sessionId, sessionActivity] of this.activityBySessionId) {
+      const treeNode = getTerminalNode(this.treeNodes, sessionActivity.nodeId);
+      const activity = treeNode
+        ? getTreeNodeActivity(treeNode, this.treeState.nodes[sessionActivity.nodeId], sessionId)
+        : undefined;
+
+      const processIsAlive = activity !== undefined && getProcessIsAlive(activity.processId);
+
+      if (activity && !processIsAlive) {
+        void this.clearExplicitActivity(sessionActivity.nodeId, activity).catch(reportActivityError);
+      }
+
+      sessionActivity.explicitActivity = processIsAlive ? activity : undefined;
+      sessionActivity.tracker.setExplicitActivity(sessionActivity.explicitActivity?.state);
+      if (sessionActivity.explicitActivity) this.reporterSessionIds.add(sessionId);
+    }
+
+    // Only claimed reporters need a liveness check. Shell work is event driven.
+    if (this.reporterSessionIds.size === 0) return;
+
+    this.reporterCheckTimer = setTimeout(() => this.checkExplicitReporters(), 5_000);
+  }
+
+  private checkExplicitReporters(): void {
+    this.reporterCheckTimer = undefined;
+
+    for (const sessionId of this.reporterSessionIds) {
+      const sessionActivity = this.activityBySessionId.get(sessionId);
+      const activity = sessionActivity?.explicitActivity;
+
+      if (!sessionActivity || !activity) {
+        this.reporterSessionIds.delete(sessionId);
+
+        continue;
+      }
+
+      if (getProcessIsAlive(activity.processId)) continue;
+
+      sessionActivity.explicitActivity = undefined;
+      sessionActivity.tracker.setExplicitActivity(undefined);
+      this.reporterSessionIds.delete(sessionId);
+      void this.clearExplicitActivity(sessionActivity.nodeId, activity).catch(reportActivityError);
+    }
+
+    if (this.reporterSessionIds.size === 0) return;
+
+    this.reporterCheckTimer = setTimeout(() => this.checkExplicitReporters(), 5_000);
+  }
+
+  private async finishShellActivity(metadata: TerminalMetadata, execution: object): Promise<void> {
+    const endedAt = Date.now();
+    const sessionActivity = this.activityBySessionId.get(metadata.sessionId);
+
+    if (!sessionActivity?.tracker.hasShellExecution(execution)) return;
+
+    // A fast final signal can reach disk before the file watcher delivers it.
+    this.treeState = await loadTreeStateFile(this.configFilePath);
+
+    if (this.activityBySessionId.get(metadata.sessionId) !== sessionActivity ||
+      !sessionActivity.tracker.hasShellExecution(execution)) return;
+
+    this.refreshExplicitActivity();
+    const needsAttention = sessionActivity.tracker.endShellExecution(execution, endedAt);
+    const explicitActivity = sessionActivity.explicitActivity;
+
+    sessionActivity.explicitActivity = undefined;
+    this.reporterSessionIds.delete(metadata.sessionId);
+
+    if (explicitActivity) {
+      await this.clearExplicitActivity(metadata.nodeId, explicitActivity);
+    }
+
+    if (!needsAttention) return;
+
+    await setTreeNodeAttention(this.configFilePath, metadata.nodeId, true, metadata.sessionId);
+  }
+
+  private async clearExplicitActivity(nodeId: string, activity: TreeNodeActivity): Promise<void> {
+    await setTreeNodeActivity(this.configFilePath, nodeId, {
+      action: "clear",
+      sessionId: activity.sessionId,
+      ownerId: activity.ownerId,
+      processId: activity.processId,
     });
   }
 
@@ -274,4 +486,31 @@ function getTerminalMetadata(terminal: vscode.Terminal): TerminalMetadata | unde
     nodeId,
     workspaceId,
   };
+}
+
+function getTerminalNode(treeNodes: ResolvedTreeNode[], nodeId: string): ResolvedTreeNode | undefined {
+  for (const treeNode of treeNodes) {
+    if (treeNode.id === nodeId) return treeNode;
+    if (treeNode.kind !== "group") continue;
+
+    const terminalNode = getTerminalNode(treeNode.children, nodeId);
+
+    if (terminalNode) return terminalNode;
+  }
+
+  return undefined;
+}
+
+function getProcessIsAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function reportActivityError(error: unknown): void {
+  console.error("TreeTY could not update terminal activity:", error);
 }

@@ -24,6 +24,7 @@ import {
   treeTYSessionIdEnvironmentName,
   treeTYTerminalLinkEnvironmentName,
   setTreeNodeAttention,
+  setTreeNodeActivity,
   setTreeNodeMetadataPath,
   updateTreeNode,
 } from "@treety/core";
@@ -72,6 +73,12 @@ const optionNameByAlias = new Map([
 ]);
 
 const optionNamesWithValues = new Set([
+  "--activity-animation",
+  "--attention",
+  "--metadata-path",
+  "--owner",
+  "--pid",
+  "--session",
   "--config",
   "--after",
   "--before",
@@ -159,6 +166,10 @@ export async function runCli(
 
     if (commandName === "metadata") {
       return await runMetadataCommand(treeConfigCommandContext);
+    }
+
+    if (commandName === "activity") {
+      return await runActivityCommand(treeConfigCommandContext);
     }
 
     if (commandName === "attention") {
@@ -384,6 +395,8 @@ async function runConfigureCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
   assertAllowedOptions(context.parsedCommandArguments, [
+    "--activity-animation",
+    "--clear-activity-animation",
     "--clear-cwd",
     "--clear-command",
     "--clear-metadata",
@@ -601,6 +614,67 @@ async function runMetadataCommand(
   throw new Error(
     "Usage: treety metadata <get|set|clear|set-path|clear-path> [node-id] [path] [json]",
   );
+}
+
+async function runActivityCommand(
+  context: TreeConfigCommandContext,
+): Promise<number> {
+  assertAllowedOptions(context.parsedCommandArguments, [
+    "--attention",
+    "--config",
+    "--global",
+    "--metadata-path",
+    "--node",
+    "--owner",
+    "--pid",
+    "--session",
+  ]);
+  assertNoCommandArguments(context.parsedCommandArguments, 2, "activity");
+
+  if (context.parsedCommandArguments.terminalCommandArguments.length > 0) {
+    throw new Error("Activity does not accept terminal command arguments.");
+  }
+
+  const action = context.parsedCommandArguments.commandArguments[1];
+
+  if (action !== "claim" && action !== "busy" && action !== "idle" && action !== "clear") {
+    throw new Error("Usage: treety activity <claim|busy|idle|clear> --owner <id> --pid <pid>");
+  }
+
+  const sessionId = getOptionValue(context.parsedCommandArguments, "--session") ??
+    context.runCliOptions.environment[treeTYSessionIdEnvironmentName];
+  const ownerId = getOptionValue(context.parsedCommandArguments, "--owner");
+  const processIdContent = getOptionValue(context.parsedCommandArguments, "--pid");
+  const attention = getOptionValue(context.parsedCommandArguments, "--attention");
+
+  if (!sessionId) {
+    throw new Error("Activity requires TREETY_SESSION_ID or --session <host-session-id>.");
+  }
+
+  if (!ownerId) throw new Error("Activity requires --owner <id>.");
+  if (!processIdContent || !/^[1-9][0-9]*$/.test(processIdContent)) {
+    throw new Error("Activity --pid must be a positive integer.");
+  }
+
+  if (attention !== undefined && attention !== "set" && attention !== "clear") {
+    throw new Error('Activity --attention must be "set" or "clear".');
+  }
+
+  const nodeId = getTargetNodeId(context);
+
+  await setTreeNodeActivity(context.treeConfigFilePath, nodeId, {
+    action,
+    sessionId,
+    ownerId,
+    processId: Number(processIdContent),
+    metadataPath: getOptionValue(context.parsedCommandArguments, "--metadata-path"),
+    needsAttention: attention === undefined ? undefined : attention === "set",
+  });
+  context.runCliOptions.output.writeOutput(
+    `Updated activity for ${nodeId} in ${context.treeConfigFilePath}`,
+  );
+
+  return 0;
 }
 
 async function runAttentionCommand(
@@ -911,6 +985,11 @@ function getTreeNodeUpdate(
 ): Omit<UpdateTreeNodeOptions, "nodeId"> {
   assertOptionAndClearFlagAreExclusive(
     parsedCommandArguments,
+    "--activity-animation",
+    "--clear-activity-animation",
+  );
+  assertOptionAndClearFlagAreExclusive(
+    parsedCommandArguments,
     "--cwd",
     "--clear-cwd",
   );
@@ -943,6 +1022,20 @@ function getTreeNodeUpdate(
   }
 
   const treeNodeUpdate: Omit<UpdateTreeNodeOptions, "nodeId"> = {};
+  const activityAnimation = getOptionValue(parsedCommandArguments, "--activity-animation");
+
+  if (activityAnimation !== undefined) {
+    if (activityAnimation !== "on" && activityAnimation !== "off") {
+      throw new Error('--activity-animation must be "on" or "off".');
+    }
+
+    treeNodeUpdate.activityAnimation = activityAnimation === "on";
+  }
+
+  if (hasFlag(parsedCommandArguments, "--clear-activity-animation")) {
+    treeNodeUpdate.activityAnimation = null;
+  }
+
   const cwd = getOptionValue(parsedCommandArguments, "--cwd");
   const projectDir = getOptionValue(parsedCommandArguments, "--project-dir");
   const terminalEnvironment = getTerminalEnvironment(parsedCommandArguments);
@@ -1264,6 +1357,7 @@ Usage:
   treety metadata clear-path [node-id] <json-pointer>
   treety attention set [node-id]
   treety attention clear [node-id]
+  treety activity <claim|busy|idle|clear> --owner <id> --pid <pid> [options]
   treety current
   treety link
   treety config path
@@ -1281,6 +1375,8 @@ Node options:
   --restart-policy <policy>    Use manual or onOpen
 
 Configure-only options:
+  --activity-animation <on|off> Set activity animation for a terminal
+  --clear-activity-animation   Restore the default activity animation
   --if-node <json>             Configure only if the current node matches this snapshot
   --clear-cwd                  Restore the inherited working directory
   --clear-project-dir          Restore the inherited project directory
@@ -1290,6 +1386,12 @@ Configure-only options:
   --clear-metadata             Remove node metadata
   --clear-command              Remove a terminal startup command
   -- <command> [args...]       Set a terminal startup command
+
+Activity options:
+  --session <host-session-id>  Defaults to TREETY_SESSION_ID
+  --metadata-path <pointer>   Require node metadata at this JSON Pointer to equal owner
+  --attention <set|clear>     Change attention atomically with claim or idle
+  Claim starts idle. Busy clears attention. Clear preserves attention.
 
 Terminal links:
   treety link prints this live terminal session's VS Code link without opening it.

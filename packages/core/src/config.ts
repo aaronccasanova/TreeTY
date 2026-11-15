@@ -138,6 +138,15 @@ function parseTreeNodeConfig(
           `${treeNodeLocation}.metadata`,
         );
 
+  if (
+    treeNodeRecord.activityAnimation !== undefined &&
+    (treeNodeRecord.kind !== "terminal" || typeof treeNodeRecord.activityAnimation !== "boolean")
+  ) {
+    throw new TreeConfigError(
+      `${treeNodeLocation}.activityAnimation must be a boolean on a terminal node.`,
+    );
+  }
+
   if (treeNodeRecord.kind === "group") {
     const childNodeValues = getArray(
       treeNodeRecord.children,
@@ -180,6 +189,10 @@ function parseTreeNodeConfig(
       treeNodeRecord.command,
       `${treeNodeLocation}.command`,
     );
+  }
+
+  if (treeNodeRecord.activityAnimation !== undefined) {
+    treeTerminalConfig.activityAnimation = treeNodeRecord.activityAnimation as boolean;
   }
 
   return treeTerminalConfig;
@@ -349,6 +362,7 @@ function resolveTreeNode(
       needsAttention:
         treeState?.nodes[treeNodeConfig.id]?.needsAttention ?? false,
       command: treeNodeConfig.command,
+      activityAnimation: treeNodeConfig.activityAnimation,
     };
   }
 

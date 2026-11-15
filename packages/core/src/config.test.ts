@@ -109,3 +109,22 @@ test.test("reports invalid JSON as a configuration error", () => {
       error.message.includes("not valid JSON"),
   );
 });
+
+test.test("parses terminal activity animation without treating it as inherited defaults", () => {
+  for (const activityAnimation of [true, false]) {
+    const treeConfig = parseTreeConfigContent(JSON.stringify({
+      version: 1,
+      tree: [{ kind: "terminal", id: "shell", name: "Shell", activityAnimation }],
+    }));
+    const resolvedTreeNode = resolveTreeConfig(treeConfig, "/workspace").tree[0];
+
+    assert.equal(resolvedTreeNode?.kind === "terminal" && resolvedTreeNode.activityAnimation, activityAnimation);
+  }
+
+  for (const treeNode of [
+    { kind: "terminal", id: "shell", name: "Shell", activityAnimation: "off" },
+    { kind: "group", id: "group", name: "Group", children: [], activityAnimation: false },
+  ]) {
+    assert.throws(() => parseTreeConfigContent(JSON.stringify({ version: 1, tree: [treeNode] })), /activityAnimation/);
+  }
+});

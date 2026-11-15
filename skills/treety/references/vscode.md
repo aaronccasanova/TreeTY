@@ -81,3 +81,11 @@ The adapter uses `@treety/core` to inject `TREETY_CONFIG_FILE`, `TREETY_CONFIG_S
 ## Respect current adapter limits
 
 Do not use the CLI as if it were a live VS Code remote-control protocol. It cannot reveal, restart, or stop an existing native terminal. Those operations currently belong to extension commands and tree controls. Configuration file watching provides CLI-to-view synchronization, while `onOpen` provides configuration-driven launch behavior.
+
+## Read status and activity
+
+Terminal status uses theme-aware circles with text and tooltips. A native spinner appears after one second of known work. Activity is separate from process status and durable attention. Ordinary shell commands require native shell integration, and commands lasting at least five seconds mark attention on completion. Linked Pi activity overrides its enclosing command and supplies its own completion attention.
+
+Use `treety.activityAnimation` (`auto` or `off`) globally, or **Configure > Activity animation** / terminal `activityAnimation` locally. Disabling animation preserves activity text and attention. Respect disabled native terminal-tab animation and explicit `workbench.reduceMotion: on`. Do not claim that the public API resolves the system preference for `auto` or exposes exact terminal focus. TreeTY does not suppress completion attention based on `activeTerminal`.
+
+Keep the extension, bundled CLI, and Pi integration aligned. Old state writers can discard runtime activity fields. Recreate terminals after upgrades to refresh their bundled CLI environment. Runtime activity is scoped to each session so multiple windows can host the same definition independently. Cleanup preserves attention.

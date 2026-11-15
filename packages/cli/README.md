@@ -77,3 +77,28 @@ Tree and attention mutations use bounded cooperative locks and atomic replacemen
 Use `move --before <sibling-id>` or `move --after <sibling-id>` for explicit ordering. Use a command after `configure ... --` to set a terminal startup command, or `--clear-command` to remove it. `metadata set-path` and `metadata clear-path` apply targeted JSON Pointer changes. `attention set` and `attention clear` default to the current `TREETY_NODE_ID` inside a TreeTY terminal.
 
 When a script reads a node before deciding which settings to change, pass that complete node JSON from `treety show` as `configure --if-node <json>`. TreeTY compares the snapshot with the latest node while holding the configuration lock. If any node field changed, the entire configure operation fails without writing. Read the node again and reconsider the intended update before retrying. JSON property order does not matter, and changes to other nodes do not prevent the update.
+
+## Report terminal activity
+
+Inside a terminal whose host registers runtime sessions, an integration can report work with its own stable owner ID and process ID:
+
+```sh
+treety activity claim --owner agent-session-123 --pid 12345
+treety activity busy --owner agent-session-123 --pid 12345
+treety activity idle --owner agent-session-123 --pid 12345 --attention set
+treety activity clear --owner agent-session-123 --pid 12345
+```
+
+The node and config default to the terminal environment. The host session defaults to `TREETY_SESSION_ID`, or you can pass `--session <host-session-id>`. Missing or retired host sessions are rejected. The `claim` action starts idle. `busy` clears attention atomically. `idle` and `claim` preserve attention by default and accept `--attention set|clear`. `clear` preserves attention and is harmless if another reporter has taken ownership.
+
+Pass `--metadata-path <json-pointer>` when claiming an integration that stores its owner ID in node metadata. TreeTY requires that value to equal `--owner`, preserves the guard on later busy and idle updates, and validates it again when the host reads activity. Clear can remove its matching activity after unlink removes the metadata. A replacement owner or process cannot be cleared by an older reporter.
+
+Multiple host sessions can report independent activity for the same node, including terminals in different VS Code windows. Attention remains attached to the node. Keep standalone CLI versions aligned with the host adapter and integration, as older attention-only state readers can discard runtime activity fields.
+
+To override activity animation for one terminal:
+
+```sh
+treety configure <node-id> --activity-animation off
+treety configure <node-id> --activity-animation on
+treety configure <node-id> --clear-activity-animation
+```

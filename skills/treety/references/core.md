@@ -92,3 +92,9 @@ Let the engine decide whether to recover, create, reveal, restart, or stop a ses
 - File watching and configuration reloads
 
 Do not add VS Code imports, terminal-emulator assumptions, or host-specific paths to `@treety/core`.
+
+## Report activity without changing lifecycle status
+
+Use `registerTreeNodeSession` and `clearTreeNodeSession` for host runtime ownership. Use `setTreeNodeActivity` for explicit `claim`, `busy`, `idle`, and `clear` reports. The generic metadata pointer guard can require that a reporter owner still matches the current link. Busy clears attention atomically, and idle can set attention atomically. Activity writes must preserve independent attention. Read through `getTreeNodeActivity` with the exact runtime session ID, rather than treating persisted activity as authoritative without its session and metadata guards.
+
+Do not infer attention from the presence of a `state.nodes` entry. Check `needsAttention`. Runtime sessions can exist without attention. Multiple sessions under one node support independent native terminals across windows.

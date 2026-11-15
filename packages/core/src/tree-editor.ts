@@ -21,6 +21,7 @@ export interface AddTreeGroupOptions extends TreeNodeDefaults {
 }
 
 export interface AddTreeTerminalOptions extends TreeNodeDefaults {
+  activityAnimation?: boolean;
   id?: string;
   metadata?: JsonValue;
   name: string;
@@ -36,6 +37,7 @@ export interface MoveTreeNodeOptions {
 }
 
 export interface UpdateTreeNodeOptions {
+  activityAnimation?: boolean | null;
   command?: TerminalCommandConfig | null;
   cwd?: string | null;
   env?: TerminalEnvironmentUpdate;
@@ -106,6 +108,10 @@ export function addTreeTerminal(
 
   if (options.command) {
     treeTerminalConfig.command = options.command;
+  }
+
+  if (options.activityAnimation !== undefined) {
+    treeTerminalConfig.activityAnimation = options.activityAnimation;
   }
 
   return addTreeNode(treeConfig, treeTerminalConfig, options.parentId);
@@ -511,6 +517,20 @@ function getUpdatedTreeNode(
   const updatedTreeNodeConfig: TreeNodeConfig = {
     ...treeNodeConfig,
   };
+
+  if (options.activityAnimation !== undefined) {
+    if (updatedTreeNodeConfig.kind !== "terminal") {
+      throw new TreeNodeOperationError(
+        "Only terminal nodes can configure activity animation.",
+      );
+    }
+
+    if (options.activityAnimation === null) {
+      delete updatedTreeNodeConfig.activityAnimation;
+    } else {
+      updatedTreeNodeConfig.activityAnimation = options.activityAnimation;
+    }
+  }
 
   if (options.command !== undefined) {
     if (treeNodeConfig.kind !== "terminal") {
