@@ -76,7 +76,7 @@ const optionNamesWithValues = new Set([
   "--activity-animation",
   "--attention",
   "--metadata-path",
-  "--owner",
+  "--reporter",
   "--pid",
   "--session",
   "--config",
@@ -625,7 +625,7 @@ async function runActivityCommand(
     "--global",
     "--metadata-path",
     "--node",
-    "--owner",
+    "--reporter",
     "--pid",
     "--session",
   ]);
@@ -637,13 +637,13 @@ async function runActivityCommand(
 
   const action = context.parsedCommandArguments.commandArguments[1];
 
-  if (action !== "claim" && action !== "busy" && action !== "idle" && action !== "clear") {
-    throw new Error("Usage: treety activity <claim|busy|idle|clear> --owner <id> --pid <pid>");
+  if (action !== "register" && action !== "busy" && action !== "idle" && action !== "unregister") {
+    throw new Error("Usage: treety activity <register|busy|idle|unregister> --reporter <id> --pid <pid>");
   }
 
   const sessionId = getOptionValue(context.parsedCommandArguments, "--session") ??
     context.runCliOptions.environment[treeTYSessionIdEnvironmentName];
-  const ownerId = getOptionValue(context.parsedCommandArguments, "--owner");
+  const reporterId = getOptionValue(context.parsedCommandArguments, "--reporter");
   const processIdContent = getOptionValue(context.parsedCommandArguments, "--pid");
   const attention = getOptionValue(context.parsedCommandArguments, "--attention");
 
@@ -651,7 +651,7 @@ async function runActivityCommand(
     throw new Error("Activity requires TREETY_SESSION_ID or --session <host-session-id>.");
   }
 
-  if (!ownerId) throw new Error("Activity requires --owner <id>.");
+  if (!reporterId) throw new Error("Activity requires --reporter <id>.");
   if (!processIdContent || !/^[1-9][0-9]*$/.test(processIdContent)) {
     throw new Error("Activity --pid must be a positive integer.");
   }
@@ -665,7 +665,7 @@ async function runActivityCommand(
   await setTreeNodeActivity(context.treeConfigFilePath, nodeId, {
     action,
     sessionId,
-    ownerId,
+    reporterId,
     processId: Number(processIdContent),
     metadataPath: getOptionValue(context.parsedCommandArguments, "--metadata-path"),
     needsAttention: attention === undefined ? undefined : attention === "set",
@@ -1357,7 +1357,7 @@ Usage:
   treety metadata clear-path [node-id] <json-pointer>
   treety attention set [node-id]
   treety attention clear [node-id]
-  treety activity <claim|busy|idle|clear> --owner <id> --pid <pid> [options]
+  treety activity <register|busy|idle|unregister> --reporter <id> --pid <pid> [options]
   treety current
   treety link
   treety config path
@@ -1388,10 +1388,12 @@ Configure-only options:
   -- <command> [args...]       Set a terminal startup command
 
 Activity options:
+  --reporter <id>            Opaque identifier for the reporting integration instance
+  --pid <process-id>         PID of the process reporting work
   --session <host-session-id>  Defaults to TREETY_SESSION_ID
-  --metadata-path <pointer>   Require node metadata at this JSON Pointer to equal owner
-  --attention <set|clear>     Change attention atomically with claim or idle
-  Claim starts idle. Busy clears attention. Clear preserves attention.
+  --metadata-path <pointer>   Require node metadata at this JSON Pointer to equal reporter ID
+  --attention <set|clear>     Change attention atomically with register or idle
+  Register starts idle. Busy clears attention. Unregister preserves attention.
 
 Terminal links:
   treety link prints this live terminal session's VS Code link without opening it.

@@ -47,7 +47,7 @@ for (const commandName of ["treety-link", "treety-setup"]) {
           "treety", "metadata", "set-path", "/integrations/pi/sessionId",
           JSON.stringify(piSessionId),
         ],
-        getActivityCommand("claim"),
+        getActivityCommand("register"),
         getActivityCommand("busy"),
         getActivityCommand("idle", "set"),
         getActivityCommand("idle", "set"),
@@ -71,7 +71,7 @@ test.test("reads current metadata for startup, reload, and resume", async () => 
       extensionHarness.treeTYCommands,
       Array.from({ length: 3 }, () => [
         metadataReadCommand,
-        getActivityCommand("claim"),
+        getActivityCommand("register"),
         getActivityCommand("busy"),
         getActivityCommand("idle", "set"),
       ]).flat(),
@@ -202,7 +202,7 @@ test.test("unlink is harmless when neither session field belongs to this session
     await extensionHarness.invokeCommand("treety-unlink");
 
     assert.deepEqual(node, originalNode);
-    assert.deepEqual(extensionHarness.treeTYCommands, [["treety", "show"], getActivityCommand("clear")]);
+    assert.deepEqual(extensionHarness.treeTYCommands, [["treety", "show"], getActivityCommand("unregister")]);
     assert.equal(extensionHarness.notifications.length, 1);
   });
 });
@@ -359,7 +359,7 @@ test.test("keeps retries, tools, and automatic compaction busy until the full ru
     await extensionHarness.emitEvent("agent_end");
 
     assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
-      getActivityCommand("claim"),
+      getActivityCommand("register"),
       getActivityCommand("busy"),
       getActivityCommand("busy"),
       getActivityCommand("busy"),
@@ -382,7 +382,7 @@ for (const eventName of ["session_compact", "session_compact_failed"] as const) 
       });
 
       assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
-        getActivityCommand("claim"),
+        getActivityCommand("register"),
         getActivityCommand("busy"),
         getActivityCommand("idle", eventName === "session_compact" ? "set" : undefined),
       ]);
@@ -427,7 +427,7 @@ test.test("a blocking UI prompt waits idle and resumes busy without inventing co
     await extensionHarness.emitEvent("ui_prompt_end");
 
     assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
-      getActivityCommand("claim"),
+      getActivityCommand("register"),
       getActivityCommand("busy"),
       getActivityCommand("idle"),
       getActivityCommand("busy"),
@@ -448,9 +448,9 @@ for (const reason of ["quit", "reload", "new", "resume", "fork"]) {
       await extensionHarness.emitEvent("session_shutdown", reason);
 
       assert.deepEqual(extensionHarness.treeTYCommands.slice(1), [
-        getActivityCommand("claim"),
+        getActivityCommand("register"),
         getActivityCommand("busy"),
-        getActivityCommand("clear"),
+        getActivityCommand("unregister"),
       ]);
     });
   });
@@ -462,13 +462,13 @@ test.test("relinking during an active turn immediately publishes busy", async ()
     await extensionHarness.invokeCommand("treety-link");
 
     assert.deepEqual(extensionHarness.treeTYCommands.slice(-2), [
-      getActivityCommand("claim"),
+      getActivityCommand("register"),
       getActivityCommand("busy"),
     ]);
   });
 });
 
-test.test("events from a different Pi session cannot signal the linked owner's activity", async () => {
+test.test("events from a different Pi session cannot signal the linked session's activity", async () => {
   await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
     await extensionHarness.emitEvent("session_start");
     extensionHarness.setSessionId("pi-session-replacement");
@@ -476,11 +476,11 @@ test.test("events from a different Pi session cannot signal the linked owner's a
     await extensionHarness.emitEvent("agent_settled");
     await extensionHarness.emitEvent("session_shutdown");
 
-    assert.deepEqual(extensionHarness.treeTYCommands, [metadataReadCommand, getActivityCommand("claim")]);
+    assert.deepEqual(extensionHarness.treeTYCommands, [metadataReadCommand, getActivityCommand("register")]);
   });
 });
 
-test.test("a missing TreeTY terminal session cannot configure or claim activity", async () => {
+test.test("a missing TreeTY terminal session cannot configure or register activity", async () => {
   await withTreeTYExtension({}, async (extensionHarness) => {
     delete process.env.TREETY_SESSION_ID;
 
@@ -491,9 +491,9 @@ test.test("a missing TreeTY terminal session cannot configure or claim activity"
   });
 });
 
-function getActivityCommand(activity: "claim" | "busy" | "idle" | "clear", attention?: "set"): string[] {
+function getActivityCommand(activity: "register" | "busy" | "idle" | "unregister", attention?: "set"): string[] {
   const activityCommand = [
-    "treety", "activity", activity, "--owner", piSessionId,
+    "treety", "activity", activity, "--reporter", piSessionId,
     "--pid", String(process.pid), "--metadata-path", "/integrations/pi/sessionId",
   ];
 

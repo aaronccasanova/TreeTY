@@ -344,7 +344,7 @@ export class VscodeTerminalHost implements TerminalHost {
       if (sessionActivity.explicitActivity) this.reporterSessionIds.add(sessionId);
     }
 
-    // Only claimed reporters need a liveness check. Shell work is event driven.
+    // Only registered reporters need a liveness check. Shell work is event driven.
     if (this.reporterSessionIds.size === 0) return;
 
     this.reporterCheckTimer = setTimeout(() => this.checkExplicitReporters(), 5_000);
@@ -406,9 +406,9 @@ export class VscodeTerminalHost implements TerminalHost {
 
   private async clearExplicitActivity(nodeId: string, activity: TreeNodeActivity): Promise<void> {
     await setTreeNodeActivity(this.configFilePath, nodeId, {
-      action: "clear",
+      action: "unregister",
       sessionId: activity.sessionId,
-      ownerId: activity.ownerId,
+      reporterId: activity.reporterId,
       processId: activity.processId,
     });
   }

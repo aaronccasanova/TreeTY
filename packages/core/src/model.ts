@@ -101,7 +101,7 @@ export interface TerminalSessionState {
 
 export interface TreeNodeActivity {
   sessionId: string;
-  ownerId: string;
+  reporterId: string;
   processId: number;
   state: "busy" | "idle";
   metadataPath?: string;

@@ -80,18 +80,20 @@ When a script reads a node before deciding which settings to change, pass that c
 
 ## Report terminal activity
 
-Inside a terminal whose host registers runtime sessions, an integration can report work with its own stable owner ID and process ID:
+Inside a terminal whose host registers runtime sessions, an integration can report work with its own reporter ID and process ID:
 
 ```sh
-treety activity claim --owner agent-session-123 --pid 12345
-treety activity busy --owner agent-session-123 --pid 12345
-treety activity idle --owner agent-session-123 --pid 12345 --attention set
-treety activity clear --owner agent-session-123 --pid 12345
+treety activity register --reporter example-run-123 --pid 12345
+treety activity busy --reporter example-run-123 --pid 12345
+treety activity idle --reporter example-run-123 --pid 12345 --attention set
+treety activity unregister --reporter example-run-123 --pid 12345
 ```
 
-The node and config default to the terminal environment. The host session defaults to `TREETY_SESSION_ID`, or you can pass `--session <host-session-id>`. Missing or retired host sessions are rejected. The `claim` action starts idle. `busy` clears attention atomically. `idle` and `claim` preserve attention by default and accept `--attention set|clear`. `clear` preserves attention and is harmless if another reporter has taken ownership.
+The node and config default to the terminal environment. The host session defaults to `TREETY_SESSION_ID`, or you can pass `--session <host-session-id>`. This is a TreeTY terminal runtime identifier, not a POSIX session ID. Missing or retired host sessions are rejected. `--reporter` identifies this reporting integration instance. `--pid` is the PID of the process reporting work, not the short-lived CLI invocation. The example values above are placeholders.
 
-Pass `--metadata-path <json-pointer>` when claiming an integration that stores its owner ID in node metadata. TreeTY requires that value to equal `--owner`, preserves the guard on later busy and idle updates, and validates it again when the host reads activity. Clear can remove its matching activity after unlink removes the metadata. A replacement owner or process cannot be cleared by an older reporter.
+`register` installs an idle reporter, replacing any previous reporter for that runtime session. `unregister` removes only the matching reporter and preserves attention. These are registration operations. `busy` and `idle` are TreeTY work states, not operating-system scheduling states. `busy` clears attention atomically. `idle` and `register` preserve attention by default and accept `--attention set|clear`.
+
+Pass `--metadata-path <json-pointer>` when registering an integration that stores its reporter ID in node metadata, for example `/integrations/example/sessionId`. TreeTY requires that value to equal `--reporter`, preserves the guard on later busy and idle updates, and validates it again when the host reads activity. Unregister can remove its matching activity after the metadata is removed. An older reporter cannot unregister a replacement reporter or process.
 
 Multiple host sessions can report independent activity for the same node, including terminals in different VS Code windows. Attention remains attached to the node. Keep standalone CLI versions aligned with the host adapter and integration, as older attention-only state readers can discard runtime activity fields.
 

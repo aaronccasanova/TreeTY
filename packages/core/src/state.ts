@@ -21,9 +21,9 @@ import { getTreeNode } from "./tree-editor";
 type UnknownRecord = Record<string, unknown>;
 
 export interface SetTreeNodeActivityOptions {
-  action: "claim" | "busy" | "idle" | "clear";
+  action: "register" | "busy" | "idle" | "unregister";
   sessionId: string;
-  ownerId: string;
+  reporterId: string;
   processId: number;
   metadataPath?: string;
   needsAttention?: boolean;
@@ -472,14 +472,14 @@ function updateTreeStateActivity(
 ): TreeState {
   const treeNodeActivity = parseTreeNodeActivity({
     sessionId: options.sessionId,
-    ownerId: options.ownerId,
+    reporterId: options.reporterId,
     processId: options.processId,
     state: options.action === "busy" ? "busy" : "idle",
     metadataPath: options.metadataPath,
   });
 
-  if (!["claim", "busy", "idle", "clear"].includes(options.action)) {
-    throw new TreeStateError("Activity action must be claim, busy, idle, or clear.");
+  if (!["register", "busy", "idle", "unregister"].includes(options.action)) {
+    throw new TreeStateError("Activity action must be register, busy, idle, or unregister.");
   }
 
   if (options.needsAttention !== undefined) {
@@ -487,8 +487,8 @@ function updateTreeStateActivity(
       throw new TreeStateError("Activity needsAttention must be boolean.");
     }
 
-    if (options.action !== "claim" && options.action !== "idle") {
-      throw new TreeStateError("Only claim and idle accept an attention change.");
+    if (options.action !== "register" && options.action !== "idle") {
+      throw new TreeStateError("Only register and idle accept an attention change.");
     }
   }
 
@@ -502,18 +502,18 @@ function updateTreeStateActivity(
 
   const previousTreeNodeActivity = treeNodeSessionState.activity;
 
-  if (options.action !== "claim") {
+  if (options.action !== "register") {
     if (
-      previousTreeNodeActivity?.ownerId !== options.ownerId ||
+      previousTreeNodeActivity?.reporterId !== options.reporterId ||
       previousTreeNodeActivity.processId !== options.processId ||
       previousTreeNodeActivity.sessionId !== options.sessionId
     ) {
-      if (options.action === "clear") return treeState;
+      if (options.action === "unregister") return treeState;
 
-      throw new TreeStateError("Activity reporter no longer owns this terminal's activity.");
+      throw new TreeStateError("Activity reporter is no longer registered for this terminal.");
     }
 
-    if (options.action === "clear") {
+    if (options.action === "unregister") {
       delete treeNodeSessionState.activity;
 
       return treeState;
@@ -523,14 +523,14 @@ function updateTreeStateActivity(
       options.metadataPath !== undefined &&
       options.metadataPath !== previousTreeNodeActivity.metadataPath
     ) {
-      throw new TreeStateError("Activity metadata guard cannot change after claim.");
+      throw new TreeStateError("Activity metadata guard cannot change after registration.");
     }
 
     treeNodeActivity.metadataPath = previousTreeNodeActivity.metadataPath;
   }
 
   if (!getActivityMetadataMatches(treeNode, treeNodeActivity)) {
-    throw new TreeStateError("Activity owner does not match the current node metadata.");
+    throw new TreeStateError("Activity reporter does not match the current node metadata.");
   }
 
   treeNodeSessionState.activity = treeNodeActivity;
@@ -547,7 +547,7 @@ function updateTreeStateActivity(
 function parseTreeNodeActivity(activityValue: unknown): TreeNodeActivity {
   const activityRecord = getRecord(activityValue, "Activity");
   const sessionId = parseActivityIdentifier(activityRecord.sessionId, "Activity sessionId");
-  const ownerId = parseActivityIdentifier(activityRecord.ownerId, "Activity ownerId");
+  const reporterId = parseActivityIdentifier(activityRecord.reporterId, "Activity reporterId");
 
   if (
     typeof activityRecord.processId !== "number" ||
@@ -563,7 +563,7 @@ function parseTreeNodeActivity(activityValue: unknown): TreeNodeActivity {
 
   const treeNodeActivity: TreeNodeActivity = {
     sessionId,
-    ownerId,
+    reporterId,
     processId: activityRecord.processId,
     state: activityRecord.state,
   };
@@ -620,7 +620,7 @@ function getActivityMetadataMatches(
     metadataValue = (metadataValue as Record<string, JsonValue>)[metadataPathSegment];
   }
 
-  return metadataValue === treeNodeActivity.ownerId;
+  return metadataValue === treeNodeActivity.reporterId;
 }
 
 function assertTerminalNode(treeConfig: TreeConfig, nodeId: string): TreeNodeConfig {

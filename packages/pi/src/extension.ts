@@ -111,7 +111,7 @@ export default function registerTreeTYExtension(
           piSessionMetadataPath,
           JSON.stringify(piSessionId),
         ]);
-        await signalTreeTYActivity(extensionAPI, piSessionId, "claim");
+        await signalTreeTYActivity(extensionAPI, piSessionId, "register");
 
         linkedPiSessionId = piSessionId;
 
@@ -144,7 +144,7 @@ export default function registerTreeTYExtension(
         const piSessionUnlinkResult = await unlinkPiSession(extensionAPI, piSessionId);
 
         linkedPiSessionId = undefined;
-        await signalTreeTYActivity(extensionAPI, piSessionId, "clear");
+        await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
 
         const notification = piSessionUnlinkResult.changed
           ? "Unlinked this Pi session. The terminal and saved conversation are preserved."
@@ -172,7 +172,7 @@ export default function registerTreeTYExtension(
       if (!getEnvironmentIsTreeTY(process.env)) return;
 
       if (previousPiSessionId && previousPiSessionId !== piSessionId) {
-        await signalTreeTYActivity(extensionAPI, previousPiSessionId, "clear");
+        await signalTreeTYActivity(extensionAPI, previousPiSessionId, "unregister");
       }
 
       // Launch-time metadata can still describe a link removed in this terminal.
@@ -180,7 +180,7 @@ export default function registerTreeTYExtension(
 
       if (!getSessionIsLinked(piSessionId, treeTYNodeMetadataContent)) return;
 
-      await signalTreeTYActivity(extensionAPI, piSessionId, "claim");
+      await signalTreeTYActivity(extensionAPI, piSessionId, "register");
       linkedPiSessionId = piSessionId;
 
       if (!extensionContext.isIdle()) {
@@ -235,7 +235,7 @@ export default function registerTreeTYExtension(
   extensionAPI.on("session_shutdown", (_event, extensionContext) => runLinkedOperation(extensionContext, async (piSessionId) => {
     linkedPiSessionId = undefined;
     uiPromptActive = false;
-    await signalTreeTYActivity(extensionAPI, piSessionId, "clear");
+    await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
   }));
 }
 
@@ -334,13 +334,13 @@ function getEnvironmentIsTreeTY(environment: NodeJS.ProcessEnv): boolean {
 async function signalTreeTYActivity(
   extensionAPI: PiExtensionAPI,
   piSessionId: string,
-  activity: "claim" | "busy" | "idle" | "clear",
+  action: "register" | "busy" | "idle" | "unregister",
   attention?: "set",
 ): Promise<void> {
   const activityArguments = [
     "activity",
-    activity,
-    "--owner",
+    action,
+    "--reporter",
     piSessionId,
     "--pid",
     String(process.pid),

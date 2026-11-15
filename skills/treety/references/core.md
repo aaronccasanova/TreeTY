@@ -95,6 +95,6 @@ Do not add VS Code imports, terminal-emulator assumptions, or host-specific path
 
 ## Report activity without changing lifecycle status
 
-Use `registerTreeNodeSession` and `clearTreeNodeSession` for host runtime ownership. Use `setTreeNodeActivity` for explicit `claim`, `busy`, `idle`, and `clear` reports. The generic metadata pointer guard can require that a reporter owner still matches the current link. Busy clears attention atomically, and idle can set attention atomically. Activity writes must preserve independent attention. Read through `getTreeNodeActivity` with the exact runtime session ID, rather than treating persisted activity as authoritative without its session and metadata guards.
+Use `registerTreeNodeSession` and `clearTreeNodeSession` to register and retire host runtime sessions. Use `setTreeNodeActivity` for explicit `register`, `busy`, `idle`, and `unregister` operations. The generic metadata pointer guard can require that the reporter ID still matches current integration metadata. Busy clears attention atomically, and idle can set attention atomically. Activity writes must preserve independent attention. Read through `getTreeNodeActivity` with the exact runtime session ID, rather than treating persisted activity as authoritative without its session and metadata guards.
 
 Do not infer attention from the presence of a `state.nodes` entry. Check `needsAttention`. Runtime sessions can exist without attention. Multiple sessions under one node support independent native terminals across windows.

@@ -67,7 +67,7 @@ export class TerminalActivityTracker {
   }
 
   private updateActivity(): void {
-    // Once an explicit reporter has claimed a command, losing that reporter
+    // Once an explicit reporter has reported within a command, losing it
     // must not make its enclosing interactive process look busy again.
     const state = this.explicitActivity ??
       (this.shellActivity

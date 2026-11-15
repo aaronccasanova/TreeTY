@@ -203,17 +203,17 @@ test.test("mutates attention idempotently and prunes stale nodes", async () => {
   }
 });
 
-test.test("preserves attention through activity ownership and host session changes", async () => {
+test.test("preserves attention through activity registration and host session changes", async () => {
   const temporaryDirPath = await fs.mkdtemp(path.join(os.tmpdir(), "treety-activity-"));
   const treeConfigFilePath = path.join(temporaryDirPath, "tree.json");
   const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
     id: "shell",
     name: "Shell",
-    metadata: { integrations: { example: { sessionId: "owner" } } },
+    metadata: { integrations: { example: { sessionId: "reporter" } } },
   });
   const reporter = {
     sessionId: "host-session",
-    ownerId: "owner",
+    reporterId: "reporter",
     processId: 123,
     metadataPath: "/integrations/example/sessionId",
   };
@@ -222,21 +222,21 @@ test.test("preserves attention through activity ownership and host session chang
     await writeTreeConfigFile(treeConfigFilePath, treeConfig);
     await setTreeNodeAttention(treeConfigFilePath, "shell", true);
     await registerTreeNodeSession(treeConfigFilePath, "shell", reporter.sessionId);
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "claim" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "register" });
 
-    const claimedTreeState = await loadTreeStateFile(treeConfigFilePath);
+    const registeredTreeState = await loadTreeStateFile(treeConfigFilePath);
 
-    assert.equal(claimedTreeState.nodes.shell?.needsAttention, true);
-    assert.equal(claimedTreeState.nodes.shell?.sessions?.[reporter.sessionId]?.activity?.state, "idle");
+    assert.equal(registeredTreeState.nodes.shell?.needsAttention, true);
+    assert.equal(registeredTreeState.nodes.shell?.sessions?.[reporter.sessionId]?.activity?.state, "idle");
     assert.deepEqual(
       await registerTreeNodeSession(treeConfigFilePath, "shell", reporter.sessionId),
-      claimedTreeState,
+      registeredTreeState,
     );
     assert.deepEqual(
       getAffectedTreeNodeAttentionIds(
         resolveTreeConfig(treeConfig, temporaryDirPath).tree,
         { version: 1, nodes: { shell: { needsAttention: true } } },
-        claimedTreeState,
+        registeredTreeState,
       ),
       [],
     );
@@ -256,8 +256,8 @@ test.test("preserves attention through activity ownership and host session chang
     await setTreeNodeAttention(treeConfigFilePath, "shell", false, "stale-session");
     await setTreeNodeActivity(treeConfigFilePath, "shell", {
       ...reporter,
-      ownerId: "old-owner",
-      action: "clear",
+      reporterId: "old-reporter",
+      action: "unregister",
     });
 
     const completedTreeState = await loadTreeStateFile(treeConfigFilePath);
@@ -304,31 +304,31 @@ test.test("rejects stale reporter writes and hides changed metadata guards", asy
   const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
     id: "shell",
     name: "Shell",
-    metadata: { owner: "first" },
+    metadata: { reporter: "first" },
   });
   const reporter = {
     sessionId: "host-session",
-    ownerId: "first",
+    reporterId: "first",
     processId: 123,
-    metadataPath: "/owner",
+    metadataPath: "/reporter",
   };
 
   try {
     await writeTreeConfigFile(treeConfigFilePath, treeConfig);
     await assert.rejects(
-      setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "claim" }),
+      setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "register" }),
       /no longer current/,
     );
     await registerTreeNodeSession(treeConfigFilePath, "shell", reporter.sessionId);
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "claim" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "register" });
     await assert.rejects(
       setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, processId: 456, action: "idle" }),
-      /no longer owns/,
+      /no longer registered/,
     );
 
     const updatedTreeConfig = updateTreeNode(treeConfig, {
       nodeId: "shell",
-      metadata: { owner: "second" },
+      metadata: { reporter: "second" },
       metadataAction: "replace",
     });
 
@@ -342,46 +342,46 @@ test.test("rejects stale reporter writes and hides changed metadata guards", asy
       /does not match/,
     );
     await assert.rejects(
-      setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "claim" }),
+      setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "register" }),
       /does not match/,
     );
 
     assert.equal((await loadTreeStateFile(treeConfigFilePath)).nodes.shell?.needsAttention, undefined);
 
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "clear" });
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "clear" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "unregister" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "unregister" });
     await setTreeNodeActivity(treeConfigFilePath, "shell", {
       ...reporter,
-      ownerId: "second",
+      reporterId: "second",
       processId: 456,
-      action: "claim",
+      action: "register",
       needsAttention: true,
     });
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "clear" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "unregister" });
 
     const replacementTreeState = await loadTreeStateFile(treeConfigFilePath);
 
-    assert.equal(replacementTreeState.nodes.shell?.sessions?.[reporter.sessionId]?.activity?.ownerId, "second");
+    assert.equal(replacementTreeState.nodes.shell?.sessions?.[reporter.sessionId]?.activity?.reporterId, "second");
     assert.equal(replacementTreeState.nodes.shell?.needsAttention, true);
     await setTreeNodeAttention(treeConfigFilePath, "shell", false);
-    assert.equal((await loadTreeStateFile(treeConfigFilePath)).nodes.shell?.sessions?.[reporter.sessionId]?.activity?.ownerId, "second");
+    assert.equal((await loadTreeStateFile(treeConfigFilePath)).nodes.shell?.sessions?.[reporter.sessionId]?.activity?.reporterId, "second");
   } finally {
     await fs.rm(temporaryDirPath, { recursive: true, force: true });
   }
 });
 
 test.test("rejects malformed activity state and runtime identities", () => {
-  const activity = { sessionId: "session", ownerId: "owner", processId: 123, state: "idle" };
+  const activity = { sessionId: "session", reporterId: "reporter", processId: 123, state: "idle" };
 
   for (const invalidActivity of [
     { ...activity, sessionId: "" },
     { ...activity, sessionId: "other" },
-    { ...activity, ownerId: "white space" },
+    { ...activity, reporterId: "white space" },
     { ...activity, processId: -1 },
     { ...activity, processId: 1.5 },
     { ...activity, processId: Number.MAX_SAFE_INTEGER + 1 },
     { ...activity, state: "running" },
-    { ...activity, metadataPath: "owner" },
+    { ...activity, metadataPath: "reporter" },
     { ...activity, metadataPath: "/~2" },
   ]) {
     assert.throws(() => parseTreeStateContent(JSON.stringify({
@@ -402,13 +402,13 @@ test.test("serializes guarded attention with metadata configuration changes", as
   const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
     id: "shell",
     name: "Shell",
-    metadata: { owner: "first" },
+    metadata: { reporter: "first" },
   });
   const reporter = {
     sessionId: "host-session",
-    ownerId: "first",
+    reporterId: "first",
     processId: 123,
-    metadataPath: "/owner",
+    metadataPath: "/reporter",
   };
   let releaseConfiguration: () => void = () => undefined;
   let markConfigurationStarted: () => void = () => undefined;
@@ -418,7 +418,7 @@ test.test("serializes guarded attention with metadata configuration changes", as
   try {
     await writeTreeConfigFile(treeConfigFilePath, treeConfig);
     await registerTreeNodeSession(treeConfigFilePath, "shell", reporter.sessionId);
-    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "claim" });
+    await setTreeNodeActivity(treeConfigFilePath, "shell", { ...reporter, action: "register" });
 
     const configurationTransaction = mutateTreeConfigFile(treeConfigFilePath, async (currentTreeConfig) => {
       markConfigurationStarted();
@@ -427,7 +427,7 @@ test.test("serializes guarded attention with metadata configuration changes", as
       return updateTreeNode(currentTreeConfig, {
         nodeId: "shell",
         metadataAction: "replace",
-        metadata: { owner: "second" },
+        metadata: { reporter: "second" },
       });
     });
 
