@@ -106,6 +106,11 @@ export async function activate(
         treeTYController.configureNode(nodeTreeEntry),
     ),
     registerAsyncCommand(
+      "treety.duplicateTerminal",
+      (nodeTreeEntry: NodeTreeEntry) =>
+        treeTYController.duplicateTerminal(nodeTreeEntry),
+    ),
+    registerAsyncCommand(
       "treety.moveNode",
       (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
     ),

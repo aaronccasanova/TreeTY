@@ -4,14 +4,15 @@ import * as test from "node:test";
 import {
   addTreeGroup,
   addTreeTerminal,
+  clearTreeNodeMetadataPath,
   createEmptyTreeConfig,
+  duplicateTreeTerminal,
   moveTreeNode,
   removeTreeNode,
   renameTreeNode,
+  setTreeNodeMetadataPath,
   TreeNodeOperationError,
   updateTreeNode,
-  clearTreeNodeMetadataPath,
-  setTreeNodeMetadataPath,
 } from "./tree-editor";
 
 test.test("adds nested groups and terminals with opaque stable IDs", () => {
@@ -83,6 +84,99 @@ test.test("updates node configuration and metadata without changing identity", (
     tags: ["review", "cli"],
   });
   assert.equal(treeConfig.tree[0]?.cwd, undefined);
+});
+
+test.test("duplicates a terminal beside its source with a new ID", () => {
+  const treeConfigWithGroup = addTreeGroup(createEmptyTreeConfig(), {
+    id: "tools",
+    name: "Tools",
+  });
+  const treeConfigWithTerminal = addTreeTerminal(treeConfigWithGroup, {
+    id: "development",
+    name: "Development",
+    parentId: "tools",
+    command: {
+      executable: "pnpm",
+      args: ["dev"],
+    },
+    cwd: "packages/vscode",
+    env: {
+      LOG_LEVEL: "debug",
+    },
+    metadata: {
+      owner: "platform",
+    },
+    projectDir: "../..",
+    restartPolicy: "onOpen",
+    shell: {
+      path: "/bin/zsh",
+      args: ["-l"],
+    },
+  });
+  const treeConfig = addTreeTerminal(treeConfigWithTerminal, {
+    id: "tests",
+    name: "Tests",
+    parentId: "tools",
+  });
+  const duplicatedTreeConfig = duplicateTreeTerminal(
+    treeConfig,
+    "development",
+  );
+  const toolsGroup = duplicatedTreeConfig.tree[0];
+
+  assert.equal(toolsGroup?.kind, "group");
+
+  if (!toolsGroup || toolsGroup.kind !== "group") {
+    assert.fail("Expected the tools group.");
+  }
+
+  const sourceTerminal = toolsGroup.children[0];
+  const duplicatedTerminal = toolsGroup.children[1];
+
+  assert.equal(sourceTerminal?.kind, "terminal");
+  assert.equal(duplicatedTerminal?.kind, "terminal");
+
+  if (
+    !sourceTerminal ||
+    sourceTerminal.kind !== "terminal" ||
+    !duplicatedTerminal ||
+    duplicatedTerminal.kind !== "terminal"
+  ) {
+    assert.fail("Expected source and duplicated terminals.");
+  }
+
+  assert.match(duplicatedTerminal.id, /^[0-9a-f-]{36}$/);
+  assert.notEqual(duplicatedTerminal.id, sourceTerminal.id);
+  assert.deepEqual(duplicatedTerminal, {
+    ...sourceTerminal,
+    id: duplicatedTerminal.id,
+  });
+  assert.deepEqual(
+    toolsGroup.children.map((treeNodeConfig) => treeNodeConfig.name),
+    ["Development", "Development", "Tests"],
+  );
+  assert.equal(
+    treeConfig.tree[0]?.kind === "group"
+      ? treeConfig.tree[0].children.length
+      : undefined,
+    2,
+  );
+});
+
+test.test("rejects duplicating missing nodes and groups", () => {
+  const treeConfig = addTreeGroup(createEmptyTreeConfig(), {
+    id: "tools",
+    name: "Tools",
+  });
+
+  assert.throws(
+    () => duplicateTreeTerminal(treeConfig, "missing"),
+    /does not exist/,
+  );
+  assert.throws(
+    () => duplicateTreeTerminal(treeConfig, "tools"),
+    /is not a terminal/,
+  );
 });
 
 test.test("renames, moves, and removes tree nodes without mutating input", () => {
