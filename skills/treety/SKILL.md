@@ -9,7 +9,7 @@ Use TreeTY as a persistent control plane for terminal definitions. Keep the tree
 
 ## Route the task
 
-- Read [references/cli.md](references/cli.md) before inspecting or changing a tree from the command line. Prefer this surface for scripted management.
+- Read [references/cli.md](references/cli.md) before inspecting or changing a tree from the command line, or installing, linking, or unlinking the Pi integration. Prefer this surface for scripted management.
 - Read [references/vscode.md](references/vscode.md) when creating or using terminal links, when the result must appear or run in VS Code, or when diagnosing configuration refresh, terminal persistence, Explorer sync, or session state.
 - Read [references/core.md](references/core.md) before importing `@treety/core`, changing the shared model, or implementing another host adapter.
 

@@ -257,17 +257,13 @@ Attention is independent from stopped, starting, idle, running, and failed statu
 
 ## Pi integration
 
-Install the Pi extension from npm:
+Install the Pi extension from a stable local TreeTY checkout using its absolute path:
 
 ```sh
-pi install npm:@treety/pi
+pi install /path/to/TreeTY
 ```
 
-You can also install this repository as a Pi package:
-
-```sh
-pi install git:github.com/aaronccasanova/TreeTY
-```
+Pi loads the extension directly from that checkout. After pulling source changes, run `/reload` in each existing Pi session, or start a new session. No Pi package reinstall or build is needed for source-only updates. See the [Pi installation guide](packages/pi/README.md#install-from-a-local-checkout) for migration from npm, alternate sources, and the separate CLI/VS Code refresh requirements.
 
 Run `/treety-link` inside a TreeTY terminal. `/treety-setup` remains a compatibility alias for the same Pi command. The TypeScript extension in `packages/pi` stores the current ID from Pi's session manager at `/integrations/pi/sessionId`, configures the terminal to start with `pi --session <session-id>`, and enables attention signaling without changing `restartPolicy`. Pi reads the current link from configuration on session startup and reload, registers itself as an activity reporter, and signals busy during a turn or manual compaction. Busy clears attention atomically. Final `agent_settled` or successful manual compaction signals idle with attention. Waiting for input remains idle. See the [Pi integration](packages/pi/README.md) for retries, prompts, compaction, and cleanup behavior. The package defines only the small Pi API boundary it uses and does not install Pi locally. Tool-specific behavior stays in this integration. The core, CLI, and host consume generic activity reports.
 
