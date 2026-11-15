@@ -28,31 +28,33 @@ interface ExtensionHarnessOptions {
 const piSessionId = "pi-session-123";
 const metadataReadCommand = ["treety", "metadata", "get"];
 
-test.test("sets up session resume without PI_SESSION_ID and signals attention", async () => {
-  await withTreeTYExtension({}, async (extensionHarness) => {
-    await extensionHarness.emitEvent("session_start", "startup");
-    await extensionHarness.invokeCommand("treety-setup");
-    await extensionHarness.emitEvent("agent_start");
-    await extensionHarness.emitEvent("agent_settled");
-    await extensionHarness.emitEvent("session_compact");
+for (const commandName of ["treety-link", "treety-setup"]) {
+  test.test(`${commandName} links session resume without PI_SESSION_ID and signals attention`, async () => {
+    await withTreeTYExtension({}, async (extensionHarness) => {
+      await extensionHarness.emitEvent("session_start", "startup");
+      await extensionHarness.invokeCommand(commandName);
+      await extensionHarness.emitEvent("agent_start");
+      await extensionHarness.emitEvent("agent_settled");
+      await extensionHarness.emitEvent("session_compact");
 
-    assert.deepEqual(extensionHarness.treeTYCommands, [
-      metadataReadCommand,
-      [
-        "treety", "configure", "--cwd", "/workspace/packages/pi",
-        "--", "pi", "--session", piSessionId,
-      ],
-      [
-        "treety", "metadata", "set-path", "/integrations/pi/sessionId",
-        JSON.stringify(piSessionId),
-      ],
-      ["treety", "attention", "clear"],
-      ["treety", "attention", "set"],
-      ["treety", "attention", "set"],
-    ]);
-    assert.equal(extensionHarness.notifications.length, 1);
+      assert.deepEqual(extensionHarness.treeTYCommands, [
+        metadataReadCommand,
+        [
+          "treety", "configure", "--cwd", "/workspace/packages/pi",
+          "--", "pi", "--session", piSessionId,
+        ],
+        [
+          "treety", "metadata", "set-path", "/integrations/pi/sessionId",
+          JSON.stringify(piSessionId),
+        ],
+        ["treety", "attention", "clear"],
+        ["treety", "attention", "set"],
+        ["treety", "attention", "set"],
+      ]);
+      assert.equal(extensionHarness.notifications.length, 1);
+    });
   });
-});
+}
 
 test.test("reads current metadata for startup, reload, and resume", async () => {
   await withTreeTYExtension({ node: createLinkedNode() }, async (extensionHarness) => {
@@ -85,7 +87,7 @@ test.test("does not write link metadata when command setup fails", async () => {
   await withTreeTYExtension({
     executeCommand: async () => ({ code: 1, stderr: "configuration failed", stdout: "" }),
   }, async (extensionHarness) => {
-    await assert.rejects(extensionHarness.invokeCommand("treety-setup"), /configuration failed/);
+    await assert.rejects(extensionHarness.invokeCommand("treety-link"), /configuration failed/);
 
     assert.deepEqual(extensionHarness.treeTYCommands, [
       [
@@ -279,7 +281,7 @@ test.test("lifecycle events cannot relink an unlinked session through stale laun
       Array.from({ length: 5 }, () => metadataReadCommand),
     );
 
-    await extensionHarness.invokeCommand("treety-setup");
+    await extensionHarness.invokeCommand("treety-link");
     await extensionHarness.emitEvent("agent_settled");
 
     assert.deepEqual(extensionHarness.treeTYCommands.at(-1), ["treety", "attention", "set"]);
@@ -332,6 +334,7 @@ test.test("commands reject outside TreeTY and lifecycle events leave it alone", 
     delete process.env.TREETY_CONFIG_FILE;
     delete process.env.TREETY_NODE_ID;
 
+    await assert.rejects(extensionHarness.invokeCommand("treety-link"), /\/treety-link must run inside a TreeTY terminal/);
     await assert.rejects(extensionHarness.invokeCommand("treety-setup"), /inside a TreeTY terminal/);
     await assert.rejects(extensionHarness.invokeCommand("treety-unlink"), /inside a TreeTY terminal/);
     await extensionHarness.emitEvent("session_start", "startup");

@@ -64,7 +64,7 @@ export default function registerTreeTYExtension(
     return nextOperation;
   };
 
-  extensionAPI.registerCommand("treety-setup", {
+  const linkCommand: PiCommand = {
     description: "Link this Pi session to the current TreeTY terminal",
     handler: (_commandArguments, commandContext) => runSerializedOperation(async () => {
       assertTreeTYEnvironment(process.env);
@@ -93,6 +93,12 @@ export default function registerTreeTYExtension(
         "info",
       );
     }),
+  };
+
+  extensionAPI.registerCommand("treety-link", linkCommand);
+  extensionAPI.registerCommand("treety-setup", {
+    ...linkCommand,
+    description: "Compatibility alias for /treety-link",
   });
 
   extensionAPI.registerCommand("treety-unlink", {
@@ -151,7 +157,7 @@ export default function registerTreeTYExtension(
 
 export function assertTreeTYEnvironment(
   environment: NodeJS.ProcessEnv,
-  commandName = "/treety-setup",
+  commandName = "/treety-link",
 ): void {
   if (getEnvironmentIsTreeTY(environment)) return;
 
