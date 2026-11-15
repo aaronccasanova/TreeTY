@@ -79,7 +79,7 @@ Route every TreeTY-owned `tree.json` and `state.json` mutation through the share
 
 The host must provide session IDs and associate recovered sessions with TreeTY node IDs. A session ID identifies one runtime terminal instance; a node ID identifies the persistent terminal definition. Emit `started`, `idle`, and `closed` events with both identifiers. The engine uses these events to maintain stopped, starting, idle, running, and failed states. `TerminalLaunchRequest` includes the resolved `cwd`, inherited environment, and optional node metadata.
 
-Before creating a terminal process, use `buildTreeTYTerminalEnvironment` with the resolved config file path, config source, node ID, metadata, and host session ID. Merge the result after user-configured environment values so the reserved TreeTY context cannot be overridden. This standardizes `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID` across adapters.
+Before creating a terminal process, use `buildTreeTYTerminalEnvironment` with the resolved config file path, config source, node ID, metadata, and host session ID. Merge the result after user-configured environment values so the reserved TreeTY context cannot be overridden. This standardizes `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, and `TREETY_SESSION_ID` across adapters. If the host can provide an opaque URI to the live session, pass optional `sessionUri` to expose `TREETY_SESSION_URI`. Omit it otherwise. Core preserves the value unchanged without assuming a scheme. Consumers can read it directly or run `treety uri`.
 
 ## Keep responsibilities separate
 

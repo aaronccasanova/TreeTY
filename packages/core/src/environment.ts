@@ -6,7 +6,8 @@ export interface TreeTYTerminalContext {
   nodeId: string;
   metadata?: JsonValue;
   sessionId: string;
-  terminalLink?: string;
+  /** Opaque host-provided URI for this live session, absent when unsupported. */
+  sessionUri?: string;
 }
 
 export const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
@@ -14,7 +15,7 @@ export const treeTYConfigSourceEnvironmentName = "TREETY_CONFIG_SOURCE";
 export const treeTYNodeIdEnvironmentName = "TREETY_NODE_ID";
 export const treeTYNodeMetadataEnvironmentName = "TREETY_NODE_METADATA";
 export const treeTYSessionIdEnvironmentName = "TREETY_SESSION_ID";
-export const treeTYTerminalLinkEnvironmentName = "TREETY_TERMINAL_LINK";
+export const treeTYSessionUriEnvironmentName = "TREETY_SESSION_URI";
 
 export function buildTreeTYTerminalEnvironment(
   treeTYTerminalContext: TreeTYTerminalContext,
@@ -28,6 +29,6 @@ export function buildTreeTYTerminalEnvironment(
         ? null
         : JSON.stringify(treeTYTerminalContext.metadata),
     [treeTYSessionIdEnvironmentName]: treeTYTerminalContext.sessionId,
-    [treeTYTerminalLinkEnvironmentName]: treeTYTerminalContext.terminalLink ?? null,
+    [treeTYSessionUriEnvironmentName]: treeTYTerminalContext.sessionUri ?? null,
   };
 }

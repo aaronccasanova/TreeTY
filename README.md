@@ -106,7 +106,7 @@ Add `--global` to make the skill available across projects. The installer can ta
 
 ## Terminal links
 
-Use **Copy terminal link** on a running TreeTY terminal, or run `treety link` inside it, to get a URL for notifications and other clickable messages. VS Code routes the link to its originating window. TreeTY validates the configuration, node, and live session before focusing the native terminal and clearing attention. A stale link never launches a replacement process.
+Use **Copy terminal link** on a running TreeTY terminal to get a URL for notifications and other clickable messages. Run `treety uri` inside that terminal, or read `TREETY_SESSION_URI`, to get its host-provided session URI. VS Code routes the link to its originating window. TreeTY validates the configuration, node, and live session before focusing the native terminal and clearing attention. A stale link never launches a replacement process.
 
 Local desktop VS Code and Insiders are supported. Links survive extension reloads when the same native session is recovered. Closing or restarting the terminal requires a new link. Keep the returned URL unchanged. See [notification examples and lifecycle details](packages/vscode/README.md#link-to-a-live-terminal).
 
@@ -153,7 +153,7 @@ Node IDs are unique within one configuration. A persistent node is identified by
 
 TreeTY reads `.treety/tree.json` from the workspace root. The CLI falls back to `$XDG_CONFIG_HOME/treety/tree.json` or `~/.config/treety/tree.json` when a workspace does not have a local tree. The VS Code extension shows explicit local and global roots together by default, so either scope can be managed without changing windows. A VS Code window with no open folder loads the global tree directly, with relative directories resolved from the user's home directory.
 
-You can create the global file with `TreeTY: Initialize Global Tree` or `treety init --global`.
+You can create the global file with `TreeTY: Initialize global tree` or `treety init --global`.
 
 `tree.json` remains the declarative source of truth. TreeTY stores mutable local state beside it:
 
@@ -237,11 +237,11 @@ Use `metadata set-path` and `metadata clear-path` for targeted JSON Pointer upda
 
 Environment values inherit and merge. A `null` value removes the variable from the launched terminal environment.
 
-Host adapters inject a standard terminal context built by `@treety/core`: `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, `TREETY_SESSION_ID`, and optional `TREETY_TERMINAL_LINK`. The CLI uses this context to target the active config and leaf without positional arguments. Explicit `--global`, `--config`, positional IDs, and `--node` selectors take precedence. `TREETY_SESSION_ID` identifies one runtime terminal instance and can change when that terminal is recreated; `TREETY_NODE_ID` remains stable. Metadata in the environment is a launch-time snapshot, while `treety metadata get` reads the current configuration.
+Host adapters inject a standard terminal context built by `@treety/core`: `TREETY_CONFIG_FILE`, `TREETY_CONFIG_SOURCE`, `TREETY_NODE_ID`, `TREETY_NODE_METADATA`, `TREETY_SESSION_ID`, and optional `TREETY_SESSION_URI`. The CLI uses this context to target the active config and leaf without positional arguments. Explicit `--global`, `--config`, positional IDs, and `--node` selectors take precedence. `TREETY_SESSION_ID` identifies one runtime terminal instance and can change when that terminal is recreated; `TREETY_NODE_ID` remains stable. Metadata in the environment is a launch-time snapshot, while `treety metadata get` reads the current configuration.
 
 ## VS Code workflow
 
-Use the search button in the TreeTY title bar or **TreeTY: Search Nodes** in the Command Palette to find groups and terminals across current local and global trees, including collapsed groups. Results show their ancestry and directories so identical names remain distinguishable. Enter reveals and expands a group, or opens and focuses a terminal. Escape closes search without changing the tree.
+Use the search button in the TreeTY title bar or **TreeTY: Search nodes** in the Command Palette to find groups and terminals across current local and global trees, including collapsed groups. Results show their ancestry and directories so identical names remain distinguishable. Enter reveals and expands a group, or opens and focuses a terminal. Escape closes search without changing the tree.
 
 Search accepts abbreviations (`pst` for "Payments service tests"), small typos (`paymnets`), and terms spread across fields (`payments tests`, `platform nightly`). Matching ignores case and accents. Names take priority over ancestry, directories, and descriptive metadata. VS Code applies its native ordering to name matches, with TreeTY ranking the remaining results. Filtering is immediate, and results update when configuration changes.
 
@@ -286,7 +286,7 @@ After trusting the plugin hooks, select `$treety-codex:treety-setup` from the `$
 
 The setup hook stores the current Codex session ID at `/integrations/codex/sessionId`, configures the terminal to start with `codex resume <session-id>`, and captures Codex's current working directory. The plugin clears attention on `UserPromptSubmit` and sets it on `Stop` or `PostCompact`. Each event reads current TreeTY metadata first, so replacing the linked session disables signaling from the old session.
 
-Opening a terminal can also add its explicitly configured project directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. `TreeTY: Explorer Directory Sync` defaults to `never` and also supports `prompt` or `always`. Every group and terminal exposes an explicit Add Directory to VS Code Workspace action. Terminal actions prefer a configured project directory, then the live current working directory, then a configured working directory. Groups without their own directory offer a filterable list of resolved descendant directories. Directory configuration uses the same filterable path field and collects every live descendant CWD for groups. The confirmation shows the exact absolute path before changing the workspace.
+Opening a terminal can also add its explicitly configured project directory to the VS Code workspace. This makes the directory visible in Explorer and lets VS Code's native Source Control integration discover its repository. `TreeTY: Explorer Directory Sync` defaults to `never` and also supports `prompt` or `always`. Every group and terminal exposes an explicit Add directory to VS Code workspace action. Terminal actions prefer a configured project directory, then the live current working directory, then a configured working directory. Groups without their own directory offer a filterable list of resolved descendant directories. Directory configuration uses the same filterable path field and collects every live descendant CWD for groups. The confirmation shows the exact absolute path before changing the workspace.
 
 `TreeTY: Global Tree Visibility` shows the global root first, followed by local roots, by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
 

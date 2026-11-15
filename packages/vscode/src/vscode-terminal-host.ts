@@ -127,10 +127,10 @@ export class VscodeTerminalHost implements TerminalHost {
     terminalLaunchRequest: TerminalLaunchRequest,
   ): Promise<HostedTerminalSession> {
     const sessionId = crypto.randomUUID();
-    let terminalLink: string | undefined;
+    let sessionUri: string | undefined;
 
     try {
-      terminalLink = await this.terminalLinks.createTerminalLink({
+      sessionUri = await this.terminalLinks.createSessionUri({
         configUri: vscode.Uri.file(this.configFilePath).toString(),
         nodeId: terminalLaunchRequest.nodeId,
         sessionId,
@@ -147,7 +147,7 @@ export class VscodeTerminalHost implements TerminalHost {
       this.workspaceId,
       this.configFilePath,
       this.configSource,
-      terminalLink,
+      sessionUri,
     );
     this.treeState = await registerTreeNodeSession(
       this.configFilePath, terminalLaunchRequest.nodeId, sessionId,
@@ -426,7 +426,7 @@ function buildTerminalOptions(
   workspaceId: string,
   configFilePath: string,
   configSource: "global" | "workspace",
-  terminalLink?: string,
+  sessionUri?: string,
 ): vscode.TerminalOptions {
   const terminalOptions: vscode.TerminalOptions = {
     name: `TreeTY: ${terminalLaunchRequest.name}`,
@@ -439,7 +439,7 @@ function buildTerminalOptions(
         nodeId: terminalLaunchRequest.nodeId,
         metadata: terminalLaunchRequest.metadata,
         sessionId,
-        terminalLink,
+        sessionUri,
       }),
       [workspaceIdEnvironmentName]: workspaceId,
     },

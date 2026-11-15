@@ -22,7 +22,7 @@ import {
   treeTYConfigSourceEnvironmentName,
   treeTYNodeIdEnvironmentName,
   treeTYSessionIdEnvironmentName,
-  treeTYTerminalLinkEnvironmentName,
+  treeTYSessionUriEnvironmentName,
   setTreeNodeAttention,
   setTreeNodeActivity,
   setTreeNodeMetadataPath,
@@ -176,8 +176,8 @@ export async function runCli(
       return await runAttentionCommand(treeConfigCommandContext);
     }
 
-    if (commandName === "link") {
-      return runLinkCommand(treeConfigCommandContext);
+    if (commandName === "uri") {
+      return runUriCommand(treeConfigCommandContext);
     }
 
     if (commandName === "current") {
@@ -714,24 +714,24 @@ async function runAttentionCommand(
   return 0;
 }
 
-function runLinkCommand(context: TreeConfigCommandContext): number {
+function runUriCommand(context: TreeConfigCommandContext): number {
   assertAllowedOptions(context.parsedCommandArguments, []);
-  assertNoCommandArguments(context.parsedCommandArguments, 1, "link");
+  assertNoCommandArguments(context.parsedCommandArguments, 1, "uri");
 
   if (context.parsedCommandArguments.terminalCommandArguments.length > 0) {
-    throw new Error("The link command does not accept terminal command arguments.");
+    throw new Error("The uri command does not accept terminal command arguments.");
   }
 
-  const terminalLink =
-    context.runCliOptions.environment[treeTYTerminalLinkEnvironmentName];
+  const sessionUri =
+    context.runCliOptions.environment[treeTYSessionUriEnvironmentName];
 
-  if (!terminalLink) {
+  if (!sessionUri) {
     throw new Error(
-      "This terminal has no VS Code link. Open or recreate a TreeTY terminal in a local VS Code window, or use Copy terminal link in TreeTY.",
+      "This terminal has no session URI. Run this command inside a TreeTY terminal whose host provides TREETY_SESSION_URI. Recreate terminals after updating the host.",
     );
   }
 
-  context.runCliOptions.output.writeOutput(terminalLink);
+  context.runCliOptions.output.writeOutput(sessionUri);
 
   return 0;
 }
@@ -1359,7 +1359,7 @@ Usage:
   treety attention clear [node-id]
   treety activity <register|busy|idle|unregister> --reporter <id> --pid <pid> [options]
   treety current
-  treety link
+  treety uri
   treety config path
 
 Node options:
@@ -1395,9 +1395,9 @@ Activity options:
   --attention <set|clear>     Change attention atomically with register or idle
   Register starts idle. Busy clears attention. Unregister preserves attention.
 
-Terminal links:
-  treety link prints this live terminal session's VS Code link without opening it.
-  It requires a TreeTY terminal in local VS Code and does not accept target selectors.
+Session URI:
+  treety uri prints TREETY_SESSION_URI unchanged without opening it.
+  The host must provide a URI for this live session. No target selectors are accepted.
 
 Target selection:
   --node <node-id>             Target a node explicitly
