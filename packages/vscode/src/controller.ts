@@ -167,9 +167,6 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       ),
       vscode.workspace.onDidChangeConfiguration((configurationChangeEvent) => {
         if (
-          configurationChangeEvent.affectsConfiguration(
-            "treety.showStatusDescriptions",
-          ) ||
           configurationChangeEvent.affectsConfiguration("treety.activityAnimation") ||
           configurationChangeEvent.affectsConfiguration("terminal.integrated.tabs.enableAnimation") ||
           configurationChangeEvent.affectsConfiguration("workbench.reduceMotion")
