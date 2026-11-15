@@ -1,0 +1,7 @@
+---
+"@treety/pi": patch
+"@treety/cli": patch
+"treety": patch
+---
+
+Add `/treety-unlink` to remove the current Pi session association and its matching resume command without removing the terminal or saved session. Recover lifecycle signaling from current configuration, and add guarded CLI configuration updates so unlinking cannot overwrite a concurrent edit.
