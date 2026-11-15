@@ -40,7 +40,7 @@ interface RevealTerminalLinkOptions {
 export class TerminalLinkManager {
   public constructor(private readonly options: TerminalLinkManagerOptions) {}
 
-  public async createTerminalLink(target: TerminalLinkTarget): Promise<string> {
+  public async createSessionUri(target: TerminalLinkTarget): Promise<string> {
     this.assertLocalWindow();
     validateTerminalLinkTarget(target);
 

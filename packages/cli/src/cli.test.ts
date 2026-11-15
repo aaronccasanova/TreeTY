@@ -14,7 +14,7 @@ import {
   treeTYConfigSourceEnvironmentName,
   treeTYNodeIdEnvironmentName,
   treeTYSessionIdEnvironmentName,
-  treeTYTerminalLinkEnvironmentName,
+  treeTYSessionUriEnvironmentName,
 } from "@treety/core";
 
 import { runCli } from "./cli";
@@ -43,38 +43,38 @@ test.test("reports the CLI package version", async () => {
   }
 });
 
-test.test("prints the current terminal's opaque link without interpreting its query", async () => {
-  const terminalLink = "vscode-insiders://treety.treety/open?nodeId%3Da%2526b%26sessionId%3Dlive%26windowId%3D4";
+test.test("prints the current terminal's opaque session URI without interpreting its query", async () => {
+  const sessionUri = "example-host://session/live?target%3Da%2526b%26route%3D4";
   const capturedOutput = createCapturedOutput();
 
-  assert.equal(await runCli(["link"], {
-    environment: { [treeTYTerminalLinkEnvironmentName]: terminalLink },
+  assert.equal(await runCli(["uri"], {
+    environment: { [treeTYSessionUriEnvironmentName]: sessionUri },
     output: capturedOutput.output,
   }), 0);
-  assert.deepEqual(capturedOutput.messages, [terminalLink]);
+  assert.deepEqual(capturedOutput.messages, [sessionUri]);
   assert.deepEqual(capturedOutput.errors, []);
 });
 
-test.test("link fails without host context and refuses selectors or extra arguments", async () => {
+test.test("uri fails without host context and refuses selectors or extra arguments", async () => {
   const capturedOutput = createCapturedOutput();
 
-  assert.equal(await runCli(["link"], {
+  assert.equal(await runCli(["uri"], {
     environment: {},
     output: capturedOutput.output,
   }), 1);
-  assert.match(capturedOutput.errors[0] ?? "", /no VS Code link/);
+  assert.match(capturedOutput.errors[0] ?? "", /no session URI/);
 
   for (const cliArguments of [
-    ["link", "other-node"],
-    ["link", "--", "other-command"],
-    ["link", "--node", "other-node"],
-    ["link", "--global"],
-    ["link", "--config", "/other/tree.json"],
+    ["uri", "other-node"],
+    ["uri", "--", "other-command"],
+    ["uri", "--node", "other-node"],
+    ["uri", "--global"],
+    ["uri", "--config", "/other/tree.json"],
   ]) {
     const rejectedOutput = createCapturedOutput();
 
     assert.equal(await runCli(cliArguments, {
-      environment: { [treeTYTerminalLinkEnvironmentName]: "opaque-host-link" },
+      environment: { [treeTYSessionUriEnvironmentName]: "example-host://session/live" },
       output: rejectedOutput.output,
     }), 1);
     assert.deepEqual(rejectedOutput.messages, []);

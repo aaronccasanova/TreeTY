@@ -36,9 +36,9 @@ The package name is scoped, while the executable remains `treety`.
 
 ## Link to the current terminal
 
-Inside a TreeTY terminal in local desktop VS Code, `treety link` prints its window-routed, live-session URL. Use it unchanged as a notification URL or Markdown link target. `TREETY_TERMINAL_LINK` contains the same string. The command prints a link without opening it and rejects target selectors such as `--node`, `--config`, and `--global`.
+Run `treety uri` inside a TreeTY terminal to print its host-provided `TREETY_SESSION_URI` unchanged. The command does not open the URI and accepts no target selectors. This optional value identifies the current live session, not the persistent terminal definition. The VS Code adapter currently supplies it for local desktop windows. See the [VS Code terminal-link guide](../vscode/README.md#link-to-a-live-terminal) for availability and session lifetime.
 
-Opening the link focuses that exact existing terminal and clears attention. It never starts a stopped terminal. Links remain valid when VS Code recovers the same native session after an extension reload. After closing or restarting the terminal, copy a new link. To get a link for another running terminal, use **Copy terminal link** in TreeTY's actions or context menu.
+Migrate `treety link` to `treety uri` and `TREETY_TERMINAL_LINK` to `TREETY_SESSION_URI`. The old command and variable are no longer supplied. Recreate hosted terminals after updating the extension so their environment uses the new name.
 
 Remote windows are not supported. Ordinary VS Code terminals do not receive a TreeTY session link. For an older TreeTY terminal in a local window, recreate it once to receive the environment value or use **Copy terminal link** in the UI. See the [VS Code link guide](../vscode/README.md#link-to-a-live-terminal) for notification integration and lifecycle limits.
 

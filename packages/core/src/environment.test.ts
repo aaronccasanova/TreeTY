@@ -8,7 +8,7 @@ import {
   treeTYNodeIdEnvironmentName,
   treeTYNodeMetadataEnvironmentName,
   treeTYSessionIdEnvironmentName,
-  treeTYTerminalLinkEnvironmentName,
+  treeTYSessionUriEnvironmentName,
 } from "./environment";
 
 test.test("builds the standard terminal context environment", () => {
@@ -28,7 +28,7 @@ test.test("builds the standard terminal context environment", () => {
     [treeTYNodeIdEnvironmentName]: "shell",
     [treeTYNodeMetadataEnvironmentName]: '{"owner":"platform"}',
     [treeTYSessionIdEnvironmentName]: "session-123",
-    [treeTYTerminalLinkEnvironmentName]: null,
+    [treeTYSessionUriEnvironmentName]: null,
   });
 });
 
@@ -43,15 +43,15 @@ test.test("removes absent metadata from the hosted environment", () => {
   assert.equal(terminalEnvironment[treeTYNodeMetadataEnvironmentName], null);
 });
 
-test.test("preserves a host-provided opaque terminal link", () => {
-  const terminalLink = "vscode://treety.treety/open?nodeId%3Dleaf%26windowId%3D1";
+test.test("preserves a host-provided opaque session URI", () => {
+  const sessionUri = "example-host://session/live?target%3Dleaf%26route%3D1";
   const terminalEnvironment = buildTreeTYTerminalEnvironment({
     configFilePath: "/workspace/.treety/tree.json",
     configSource: "workspace",
     nodeId: "leaf",
     sessionId: "session-123",
-    terminalLink,
+    sessionUri,
   });
 
-  assert.equal(terminalEnvironment[treeTYTerminalLinkEnvironmentName], terminalLink);
+  assert.equal(terminalEnvironment[treeTYSessionUriEnvironmentName], sessionUri);
 });

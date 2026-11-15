@@ -552,13 +552,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       throw new Error("Open this terminal before copying its link.");
     }
 
-    const terminalLink = await this.terminalLinks.createTerminalLink({
+    const sessionUri = await this.terminalLinks.createSessionUri({
       configUri: nodeTreeEntry.workspaceModel.configFileUri.toString(),
       nodeId: nodeTreeEntry.treeNode.id,
       sessionId: session.id,
     });
 
-    await vscode.env.clipboard.writeText(terminalLink);
+    await vscode.env.clipboard.writeText(sessionUri);
     vscode.window.setStatusBarMessage("TreeTY: Terminal link copied", 3000);
   }
 

@@ -60,43 +60,43 @@
       },
       {
         "command": "treety.searchNodes",
-        "title": "Search Nodes",
+        "title": "Search nodes",
         "category": "TreeTY",
         "icon": "$(search)"
       },
       {
         "command": "treety.initializeWorkspace",
-        "title": "Initialize Workspace",
+        "title": "Initialize workspace",
         "category": "TreeTY",
         "icon": "$(new-folder)"
       },
       {
         "command": "treety.initializeGlobalTree",
-        "title": "Initialize Global Tree",
+        "title": "Initialize global tree",
         "category": "TreeTY",
         "icon": "$(globe)"
       },
       {
         "command": "treety.openConfig",
-        "title": "Open Configuration",
+        "title": "Open configuration",
         "category": "TreeTY",
         "icon": "$(json)"
       },
       {
         "command": "treety.collapseAll",
-        "title": "Collapse All",
+        "title": "Collapse all",
         "category": "TreeTY",
         "icon": "$(collapse-all)"
       },
       {
         "command": "treety.createGroup",
-        "title": "Create Group",
+        "title": "Create group",
         "category": "TreeTY",
         "icon": "$(new-folder)"
       },
       {
         "command": "treety.createTerminal",
-        "title": "Create Terminal",
+        "title": "Create terminal",
         "category": "TreeTY",
         "icon": "$(add)"
       },
@@ -132,25 +132,25 @@
       },
       {
         "command": "treety.openTerminal",
-        "title": "Open Terminal",
+        "title": "Open terminal",
         "category": "TreeTY",
         "icon": "$(terminal)"
       },
       {
         "command": "treety.restartTerminal",
-        "title": "Restart Terminal",
+        "title": "Restart terminal",
         "category": "TreeTY",
         "icon": "$(debug-restart)"
       },
       {
         "command": "treety.restartGroupTerminals",
-        "title": "Restart Terminals",
+        "title": "Restart terminals",
         "category": "TreeTY",
         "icon": "$(debug-restart)"
       },
       {
         "command": "treety.stopTerminal",
-        "title": "Stop Terminal",
+        "title": "Stop terminal",
         "category": "TreeTY",
         "icon": "$(debug-stop)"
       },
@@ -168,7 +168,7 @@
       },
       {
         "command": "treety.addDirectoryToWorkspace",
-        "title": "Add Directory to VS Code Workspace...",
+        "title": "Add directory to VS Code workspace...",
         "category": "TreeTY",
         "icon": "$(folder-library)"
       },

@@ -4,7 +4,7 @@
 
 Tree editing includes before/after ordering, startup-command updates, and targeted JSON Pointer metadata updates. `state.json` stores durable boolean attention separately from `tree.json`. Shared storage helpers use cooperative locks and atomic replacement, while `TreeTYEngine.reconcile()` updates a running tree without replacing matching live sessions.
 
-Host adapters can use `buildTreeTYTerminalEnvironment` to inject TreeTY's standard config, node, metadata, and runtime session context into every terminal they create.
+Host adapters can use `buildTreeTYTerminalEnvironment` to inject TreeTY's standard config, node, metadata, and runtime session context into every terminal they create. Optional `TreeTYTerminalContext.sessionUri` supplies `TREETY_SESSION_URI`, an opaque URI that returns to that exact live session. Omit it when unsupported. Core copies the value unchanged and does not assume an application scheme. `treeTYSessionUriEnvironmentName` exports its environment name. These replace the former `terminalLink` field and `treeTYTerminalLinkEnvironmentName` export.
 
 ```ts
 import {

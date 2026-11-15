@@ -30,20 +30,20 @@ nodeTest.test("resolves the complete link and preserves opaque external URI seri
       return `vscode-insiders://treety.treety/open?${encodeURIComponent(`${uri.query}&windowId=17`)}`;
     },
   });
-  const terminalLink = await terminalLinks.createTerminalLink(target);
+  const sessionUri = await terminalLinks.createSessionUri(target);
 
   assert.ok(resolvedUri);
   assert.deepEqual(Object.fromEntries(new URLSearchParams(resolvedUri.query)), target);
   assert.equal(resolvedUri.scheme, "vscode-insiders");
   assert.equal(resolvedUri.authority, "treety.treety");
   assert.equal(
-    terminalLink,
+    sessionUri,
     `vscode-insiders://treety.treety/open?${encodeURIComponent(`${resolvedUri.query}&windowId=17`)}`,
   );
   assert.deepEqual(
     terminalLinks.parseTerminalLink({
       ...resolvedUri,
-      query: decodeURIComponent(new URL(terminalLink).search.slice(1)),
+      query: decodeURIComponent(new URL(sessionUri).search.slice(1)),
     }),
     target,
   );
@@ -78,7 +78,7 @@ nodeTest.test("local links cannot be created or consumed in a remote window", as
     },
   });
 
-  await assert.rejects(terminalLinks.createTerminalLink(createTarget()), /local desktop/);
+  await assert.rejects(terminalLinks.createSessionUri(createTarget()), /local desktop/);
   assert.throws(() => terminalLinks.parseTerminalLink(createTerminalLinkUri()), /local desktop/);
 });
 

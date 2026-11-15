@@ -38,7 +38,7 @@ Use matching versions of the VS Code extension, bundled CLI, and any activity-re
 
 ## Find a group or terminal
 
-Click the search icon in the TreeTY title bar or run **TreeTY: Search Nodes**. Search names, ancestor groups, workspace names, directories, and descriptive metadata across current trees, including collapsed groups. Results show their hierarchy and location. Press Enter to reveal and expand a group or open and focus a terminal. Escape cancels.
+Click the search icon in the TreeTY title bar or run **TreeTY: Search nodes**. Search names, ancestor groups, workspace names, directories, and descriptive metadata across current trees, including collapsed groups. Results show their hierarchy and location. Press Enter to reveal and expand a group or open and focus a terminal. Escape cancels.
 
 Abbreviations such as `pst` for "Payments service tests" and small typos such as `paymnets` work. Words can match different fields, so `payments tests` can find "Service tests" under "Payments". Matching ignores case and accents. Search updates immediately as you type and stays current as nodes are added, renamed, moved, or removed.
 
@@ -50,7 +50,7 @@ TreeTY shows the global root first as a stable anchor, followed by an explicit r
 
 Select a local root, global root, or group before using the title-bar controls. `+` creates a terminal, and `new folder` creates a group at the selected location. Each create prompt confirms its destination. Group hover controls expose create terminal, create group, delete, and actions. The group actions menu and right-click menu can restart every terminal in that group and its nested groups. Terminal hover controls expose delete and actions; selecting the row creates or reveals its native terminal. The actions gear stays at the far right and opens a complete menu for the node, including delete, group creation shortcuts, and applicable terminal session actions. Right-click remains available with the same concise action names. The Command Palette groups the same commands under TreeTY. Stopping closes the native terminal but preserves the tree entry, while deleting removes the entry after confirmation.
 
-**Collapse All** first collapses groups beneath the open Global and workspace roots, leaving their top-level entries visible. Use it again to collapse the roots too. Roots you've already closed stay closed. If no top-level groups are expanded, it collapses the roots immediately. Expanding a group, including through search or a terminal link, makes the next collapse return to the top-level overview.
+**Collapse all** first collapses groups beneath the open Global and workspace roots, leaving their top-level entries visible. Use it again to collapse the roots too. Roots you've already closed stay closed. If no top-level groups are expanded, it collapses the roots immediately. Expanding a group, including through search or a terminal link, makes the next collapse return to the top-level overview.
 
 Move opens a searchable representation of the tree with every group expanded and the moving node in view. Select individual groups to collapse or expand them. The top-right collapse control follows the same two-stage behavior as the sidebar: groups first, then the root. The collapse and expand controls clear any active search. The expand control opens the entire tree. Each destination row exposes inline controls ordered as insert above, insert below, and move inside when applicable. The inside control stays at the far right, and terminal leaves receive an extra indentation step to preserve the tree hierarchy. This keeps the editor to one row per node while supporting cross-group moves for terminals and whole groups. Configuration watchers reconcile only the changed tree and preserve matching live sessions. Changes to launch settings apply to the next terminal launch.
 
@@ -68,11 +68,7 @@ Source code, issue tracking, and CLI documentation are available in the [TreeTY 
 
 ## Link to a live terminal
 
-Choose **Copy terminal link** from a running terminal's actions or context menu. Inside a terminal created by TreeTY, print the same kind of link with:
-
-```sh
-treety link
-```
+Choose **Copy terminal link** from a running terminal's actions or context menu. Inside a terminal created by TreeTY, run `treety uri` or read `TREETY_SESSION_URI` directly.
 
 The extension resolves the complete link through VS Code's `asExternalUri` API so it returns to the originating window. The link includes the configuration URI, node ID, and live terminal session ID. Clicking it reveals and selects the matching TreeTY leaf, expanding its parent groups as needed, then gives keyboard focus to that exact native terminal and clears its attention marker. It does not start a stopped terminal, run a supplied command, load an arbitrary configuration, or change the workspace.
 
@@ -80,12 +76,14 @@ Use the returned string unchanged as a notification's URL or Markdown target. Fo
 
 ```sh
 treety attention set
-terminal_link="$(treety link)"
-printf '[Return to terminal](%s)\n' "$terminal_link"
+session_uri="${TREETY_SESSION_URI:-}"
+if [ -n "$session_uri" ]; then
+  printf '[Return to terminal](%s)\n' "$session_uri"
+fi
 ```
 
-`TREETY_TERMINAL_LINK` contains the same opaque URL for tools that read environment variables directly. `treety link` only targets its own hosted terminal and rejects node/configuration selectors. To link to another terminal, use its **Copy terminal link** action. Ordinary VS Code terminals have the bundled CLI but do not have a TreeTY session link. Terminals created before this feature need to be recreated once.
+Migrate `treety link` to `treety uri` and `TREETY_TERMINAL_LINK` to `TREETY_SESSION_URI`. The old names are not aliases. Recreate terminals after updating to receive the new environment variable. Preserve the value exactly: VS Code supplies opaque window-routing data that cannot be reconstructed from the configuration path, node ID, and session ID alone. If the variable is absent, omit the terminal destination or use **Copy terminal link** in the intended terminal. Ordinary VS Code terminals have the bundled CLI but do not have a TreeTY session link. Terminals created before link support need to be recreated once.
 
 Links currently support local desktop VS Code, including Insiders. A recovered native session keeps its link across extension-host reloads. Closing or restarting the terminal ends that session, so open it and copy a new link. If the original window has closed, VS Code may deliver an old link to another window. TreeTY rejects it unless that window has the exact loaded configuration, node, and live session. Missing, deleted, and invalid targets produce an error without launching anything.
 
-Some notification clients restrict custom URL schemes. They must allow the VS Code application URL for this integration to open. Link generation is optional: if VS Code cannot resolve a URL, the terminal still opens and `treety link` explains that no link is available.
+Some notification clients restrict custom URL schemes. They must allow the VS Code application URL for this integration to open. Link generation is optional: if VS Code cannot resolve a URL, the terminal still opens and `TREETY_SESSION_URI` is absent.
