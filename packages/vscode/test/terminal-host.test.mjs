@@ -16,6 +16,19 @@ const hostCode = buildSync({
   write: false,
 }).outputFiles[0].text;
 
+nodeTest.test("revealing a native session requests keyboard focus", async () => {
+  const fixture = createFixture();
+  const showOptions = [];
+
+  fixture.terminals[0].show = (preserveFocus) => { showOptions.push(preserveFocus); };
+
+  await fixture.host.getSessions();
+  fixture.host.revealSession("session-first");
+
+  assert.deepEqual(showOptions, [false]);
+  fixture.host.dispose();
+});
+
 nodeTest.test("does not recover a terminal that closes while its registration waits", async () => {
   const fixture = createFixture();
   const registration = createDeferred();

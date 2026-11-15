@@ -5,6 +5,7 @@ import {
   addTreeGroup,
   addTreeTerminal,
   createEmptyTreeConfig,
+  createTreeNodeId,
   getAffectedTreeNodeAttentionIds,
   getTreeStateFilePath,
   getTreeNode,
@@ -33,6 +34,7 @@ import * as vscode from "vscode";
 
 import { collapseMoveTree } from "./move-tree-state";
 import type { MoveTreeEditorState } from "./move-tree-state";
+import { resolveNodeSearchEntry } from "./node-search";
 import { revealTerminalLink } from "./terminal-links";
 import type { TerminalLinkManager, TerminalLinkTarget } from "./terminal-links";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
@@ -133,7 +135,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public readonly onDidChangeWorkspaceModels =
     this.workspaceModelChangeEmitter.event;
 
-  public constructor(private readonly terminalLinks: TerminalLinkManager) {
+  public constructor(
+    private readonly terminalLinks: TerminalLinkManager,
+    private readonly revealNode: (nodeTreeEntry: NodeTreeEntry) => PromiseLike<void>,
+  ) {
     const workspaceConfigFileWatcher = vscode.workspace.createFileSystemWatcher(
       `**/${configDirName}/${configFileName}`,
     );
@@ -273,12 +278,51 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (!terminalName) return;
 
     const parentId = getTargetParentId(treeEntry);
-    await this.writeWorkspaceTreeConfig(workspaceModel, (treeConfig) =>
-      addTreeTerminal(treeConfig, {
+    let terminalNodeId = "";
+
+    await this.writeWorkspaceTreeConfig(workspaceModel, (treeConfig) => {
+      terminalNodeId = createTreeNodeId(treeConfig);
+
+      return addTreeTerminal(treeConfig, {
+        id: terminalNodeId,
         name: terminalName,
         parentId,
-      }),
+      });
+    });
+
+    await this.workspaceReloadPromise;
+
+    const nodeSearchIdentity = {
+      workspaceId: workspaceModel.id,
+      nodeId: terminalNodeId,
+    };
+
+    const nodeTreeEntry = resolveNodeSearchEntry(
+      this.workspaceModels,
+      nodeSearchIdentity,
     );
+
+    if (!nodeTreeEntry || nodeTreeEntry.treeNode.kind !== "terminal") {
+      throw new Error("The created terminal is no longer available.");
+    }
+
+    try {
+      await this.revealNode(nodeTreeEntry);
+    } finally {
+      // A reload may replace the engine while VS Code reveals the tree.
+      await this.workspaceReloadPromise;
+
+      const currentNodeTreeEntry = resolveNodeSearchEntry(
+        this.workspaceModels,
+        nodeSearchIdentity,
+      );
+
+      if (!currentNodeTreeEntry || currentNodeTreeEntry.treeNode.kind !== "terminal") {
+        throw new Error("The created terminal is no longer available.");
+      }
+
+      await this.openTerminal(currentNodeTreeEntry);
+    }
   }
 
   public async renameNode(nodeTreeEntry: NodeTreeEntry): Promise<void> {
