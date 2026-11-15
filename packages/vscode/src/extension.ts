@@ -22,11 +22,16 @@ export async function activate(
     resolveExternalUri: async (uri) =>
       (await vscode.env.asExternalUri(vscode.Uri.from(uri))).toString(),
   });
-  const treeTYController = new TreeTYController(terminalLinks);
+  const treeTYController = new TreeTYController(
+    terminalLinks,
+    (nodeTreeEntry) =>
+      treeTYTreeView.reveal(nodeTreeEntry, { select: true, focus: false }),
+  );
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
-  const treeTYTreeView = vscode.window.createTreeView("treety.terminals", {
-    treeDataProvider: treeTYTreeProvider,
-  });
+  const treeTYTreeView: vscode.TreeView<TreeEntry> = vscode.window.createTreeView(
+    "treety.terminals",
+    { treeDataProvider: treeTYTreeProvider },
+  );
 
   const treeCollapseController = new TreeCollapseController({
     treeView: treeTYTreeView,
