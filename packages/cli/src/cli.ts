@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import * as os from "node:os";
+import * as util from "node:util";
 
 import {
   addTreeGroup,
@@ -77,6 +78,7 @@ const optionNamesWithValues = new Set([
   "--cwd",
   "--env",
   "--id",
+  "--if-node",
   "--metadata",
   "--node",
   "--parent",
@@ -393,6 +395,7 @@ async function runConfigureCommand(
     "--delete-env",
     "--env",
     "--global",
+    "--if-node",
     "--metadata",
     "--node",
     "--project-dir",
@@ -416,9 +419,36 @@ async function runConfigureCommand(
     ...getTreeNodeUpdate(context.parsedCommandArguments),
   };
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
-    updateTreeNode(treeConfig, updateTreeNodeOptions),
+  const expectedTreeNodeContent = getOptionValue(
+    context.parsedCommandArguments,
+    "--if-node",
   );
+  let expectedTreeNode: unknown;
+
+  if (expectedTreeNodeContent !== undefined) {
+    try {
+      expectedTreeNode = JSON.parse(expectedTreeNodeContent) as unknown;
+    } catch {
+      throw new Error("--if-node must contain valid JSON from treety show.");
+    }
+  }
+
+  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
+    if (expectedTreeNodeContent !== undefined) {
+      const treeNode = getTreeNode(treeConfig, nodeId);
+      const treeNodeSnapshot = treeNode
+        ? JSON.parse(JSON.stringify(treeNode)) as unknown
+        : undefined;
+
+      if (!util.isDeepStrictEqual(treeNodeSnapshot, expectedTreeNode)) {
+        throw new Error(
+          `Tree node "${nodeId}" changed since it was read. Read it again before configuring.`,
+        );
+      }
+    }
+
+    return updateTreeNode(treeConfig, updateTreeNodeOptions);
+  });
   context.runCliOptions.output.writeOutput(
     `Configured ${nodeId} in ${context.treeConfigFilePath}`,
   );
@@ -1251,6 +1281,7 @@ Node options:
   --restart-policy <policy>    Use manual or onOpen
 
 Configure-only options:
+  --if-node <json>             Configure only if the current node matches this snapshot
   --clear-cwd                  Restore the inherited working directory
   --clear-project-dir          Restore the inherited project directory
   --delete-env <NAME>          Delete a node environment override

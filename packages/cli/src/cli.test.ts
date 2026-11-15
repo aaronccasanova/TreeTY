@@ -469,6 +469,123 @@ test.test("targets an explicit global config ahead of hosted terminal context", 
   }
 });
 
+test.test("configure guards the complete node snapshot and applies all changes together", async () => {
+  const temporaryDirPath = await fs.mkdtemp(
+    path.join(os.tmpdir(), "treety-cli-configure-guard-"),
+  );
+  const capturedOutput = createCapturedOutput();
+  const runCliOptions = {
+    currentDirPath: temporaryDirPath,
+    environment: {},
+    homeDirPath: temporaryDirPath,
+    output: capturedOutput.output,
+  };
+  const treeConfigFilePath = path.join(temporaryDirPath, ".treety", "tree.json");
+
+  try {
+    assert.equal(await runCli(["init"], runCliOptions), 0);
+    assert.equal(await runCli([
+      "add", "terminal", "Shell", "--id", "shell", "--cwd", "/workspace",
+      "--metadata", '{"owner":"platform","sessionId":"session-1"}',
+      "--", "pi", "--session", "session-1",
+    ], runCliOptions), 0);
+    assert.equal(await runCli([
+      "add", "terminal", "Other", "--id", "other",
+    ], runCliOptions), 0);
+    assert.equal(await runCli(["show", "shell"], runCliOptions), 0);
+
+    const expectedTreeNode = JSON.parse(
+      capturedOutput.messages.at(-1) ?? "",
+    ) as Record<string, unknown>;
+    const expectedTreeNodeContent = JSON.stringify(
+      Object.fromEntries(Object.entries(expectedTreeNode).reverse()),
+    );
+
+    assert.equal(await runCli(["rename", "other", "Changed other"], runCliOptions), 0);
+    assert.equal(await runCli([
+      "configure", "shell", "--if-node", expectedTreeNodeContent,
+      "--clear-command", "--metadata", '{"owner":"platform"}',
+    ], runCliOptions), 0);
+
+    const configuredTreeConfigFileContent = await fs.readFile(treeConfigFilePath, "utf8");
+    const configuredTreeConfig = parseTreeConfigContent(configuredTreeConfigFileContent);
+
+    assert.deepEqual(configuredTreeConfig.tree[0], {
+      kind: "terminal",
+      id: "shell",
+      name: "Shell",
+      cwd: "/workspace",
+      metadata: { owner: "platform" },
+    });
+    assert.equal(configuredTreeConfig.tree[1]?.name, "Changed other");
+
+    assert.equal(await runCli([
+      "configure", "shell", "--if-node", expectedTreeNodeContent,
+      "--clear-cwd", "--clear-metadata",
+    ], runCliOptions), 1);
+    assert.match(capturedOutput.errors.at(-1) ?? "", /changed since it was read/);
+    assert.equal(await fs.readFile(treeConfigFilePath, "utf8"), configuredTreeConfigFileContent);
+
+    assert.equal(await runCli([
+      "configure", "shell", "--if-node", "{", "--clear-cwd",
+    ], runCliOptions), 1);
+    assert.match(capturedOutput.errors.at(-1) ?? "", /--if-node must contain valid JSON/);
+    assert.equal(await fs.readFile(treeConfigFilePath, "utf8"), configuredTreeConfigFileContent);
+  } finally {
+    await fs.rm(temporaryDirPath, { recursive: true, force: true });
+  }
+});
+
+test.test("concurrent guarded configure calls cannot both consume the same snapshot", async () => {
+  const temporaryDirPath = await fs.mkdtemp(
+    path.join(os.tmpdir(), "treety-cli-concurrent-guard-"),
+  );
+  const capturedOutput = createCapturedOutput();
+  const runCliOptions = {
+    currentDirPath: temporaryDirPath,
+    environment: {},
+    homeDirPath: temporaryDirPath,
+    output: capturedOutput.output,
+  };
+
+  try {
+    assert.equal(await runCli(["init"], runCliOptions), 0);
+    assert.equal(await runCli([
+      "add", "terminal", "Shell", "--id", "shell", "--cwd", "/workspace",
+    ], runCliOptions), 0);
+    assert.equal(await runCli(["show", "shell"], runCliOptions), 0);
+
+    const expectedTreeNodeContent = capturedOutput.messages.at(-1) ?? "";
+    const configureExitCodes = await Promise.all([
+      runCli([
+        "configure", "shell", "--if-node", expectedTreeNodeContent,
+        "--metadata", '{"owner":"first"}',
+      ], runCliOptions),
+      runCli([
+        "configure", "shell", "--if-node", expectedTreeNodeContent,
+        "--metadata", '{"owner":"second"}',
+      ], runCliOptions),
+    ]);
+    const treeConfig = parseTreeConfigContent(await fs.readFile(
+      path.join(temporaryDirPath, ".treety", "tree.json"),
+      "utf8",
+    ));
+
+    assert.deepEqual([...configureExitCodes].sort(), [0, 1]);
+    assert.deepEqual(treeConfig.tree[0], {
+      kind: "terminal",
+      id: "shell",
+      name: "Shell",
+      cwd: "/workspace",
+      metadata: { owner: configureExitCodes[0] === 0 ? "first" : "second" },
+    });
+    assert.equal(capturedOutput.errors.length, 1);
+    assert.match(capturedOutput.errors[0] ?? "", /changed since it was read/);
+  } finally {
+    await fs.rm(temporaryDirPath, { recursive: true, force: true });
+  }
+});
+
 test.test("prints help and version without a configuration", async () => {
   const capturedOutput = createCapturedOutput();
 

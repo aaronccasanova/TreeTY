@@ -1,6 +1,6 @@
 ---
 name: treety
-description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, order, annotate, signal attention for, or remove TreeTY groups and terminal leaves; coordinate independent terminal sessions through @treety/cli; link Pi sessions with /treety-setup; work with tree.json and local state.json; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
+description: Manage and extend TreeTY hierarchical terminal workspaces. Use when an agent needs to inspect, create, configure, order, annotate, signal attention for, or remove TreeTY groups and terminal leaves; coordinate independent terminal sessions through @treety/cli; link or unlink Pi sessions with /treety-link and /treety-unlink; work with tree.json and local state.json; operate the TreeTY VS Code integration; or build a custom host adapter with @treety/core.
 ---
 
 # TreeTY
