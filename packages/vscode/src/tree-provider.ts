@@ -416,12 +416,16 @@ function buildTerminalTooltip(
     nodeTreeEntry.workspaceModel.resolvedTreeConfig.workspaceDirPath;
   const terminalDirName =
     path.relative(workspaceDirPath, nodeTreeEntry.treeNode.cwd) || ".";
+  const recoveryMessage = nodeTreeEntry.workspaceModel.vscodeTerminalHost.getSessionRecoveryMessage(
+    nodeTreeEntry.treeNode.id,
+  );
   const tooltipLines = [
     `Status: ${terminalSessionState.status}`,
     `Activity: ${terminalActivity.state}`,
     `Working directory: ${nodeTreeEntry.treeNode.cwd}`,
     `Relative directory: ${terminalDirName}`,
     `Node ID: ${nodeTreeEntry.treeNode.id}`,
+    ...(recoveryMessage ? [recoveryMessage] : []),
   ];
 
   if (nodeTreeEntry.treeNode.projectDir) {

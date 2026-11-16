@@ -46,7 +46,7 @@ Reload VS Code and create new terminals afterward. This fallback reuses `artifac
 - Keep opaque stable node IDs independent from human-readable names.
 - Store optional freeform JSON metadata on any group or terminal.
 - Create native VS Code terminals lazily and reveal an existing terminal when its leaf is selected.
-- Reattach terminals revived by VS Code instead of launching duplicates.
+- Reattach identifiable terminals restored by VS Code and pause replacement when a saved session remains unresolved.
 - Track stopped, starting, idle, running, and failed states.
 - Support interactive shells and direct startup commands.
 - Load workspace trees from `.treety/tree.json` alongside a separately manageable global tree.
@@ -255,6 +255,18 @@ Move uses a searchable, collapsible representation of the tree with inline contr
 
 Attention is independent from stopped, starting, idle, running, and failed status. Known activity displays a native spinner after one second. Ordinary shell commands lasting at least five seconds mark completion attention, and explicit reporters can supply their own activity and completion signal. Configure animation globally with `treety.activityAnimation` or per terminal through **Configure > Activity animation**. See [status, activity, and attention](packages/vscode/README.md#status-activity-and-attention) for shell integration requirements and accessibility settings. `treety attention set` or **Mark needs attention** from the terminal's VS Code actions gear or right-click menu adds a small `!` decoration to a terminal and its ancestor groups. Both menus also offer **Clear attention**. Opening or revealing that terminal clears it automatically.
 
+### Recover native terminals
+
+New TreeTY terminals carry a random recovery token in their native VS Code title, while the TreeTY view keeps the plain configured name. A scoped record in the extension's global storage directory lets TreeTY recognize that terminal after VS Code reconnects without its original creation environment. Each token has its own exclusively created file, and a lock for each leaf coordinates launches across windows sharing the same host and tree scope. Renaming a TreeTY entry updates its tree label. The existing native title retains its token, and the next launch uses the new name.
+
+New owner records use a local socket handshake to identify the running extension activation, so a reused extension-host PID can't impersonate it. If the endpoint can't start, launches and recovery use conservative PID checks and retry the endpoint on later ownership writes. This fallback can retain a block after PID reuse. Recovery scans bound concurrent reads and reuse unchanged record contents. Retained token files still accumulate, preserving recognition of late native handles.
+
+If a saved session cannot be identified, TreeTY pauses automatic replacement. Open the leaf or run **TreeTY: Refresh** to retry discovery. A known active window owner or matching local terminal blocks replacement. A saved PID alone is advisory. Without an active owner, opening the leaf offers **Forget previous session and start**, even if that PID is still alive. Use this only after closing the old terminal in every window. Forgetting clears the saved owner and PID while retaining the token to recognize a late restored tab. It doesn't close any terminal, and VS Code may still restore an old tab later.
+
+VS Code reports the same close reason for its trash action and a terminal transfer, so reopening after a native close may need this confirmation even when the old PID has exited. TreeTY's **Stop** action and confirmed process exits clear the saved session. Shutdown cleanup uses the originating window's recorded settings: an unowned session is retired automatically when terminal persistence was disabled, or when process revival was set to `never` and its recorded PID has exited. Reopening then needs no confirmation. Retired tokens have no time-based expiry, so TreeTY can recognize a late restored tab.
+
+Historical terminals with neither creation identity nor a recovery token cannot be recovered automatically. Missing or corrupt records limit duplicate prevention. TreeTY uses the shared filesystem path supplied by the Node extension host, including storage with `file` or `vscode-userdata` URIs. If that path is unavailable, the tree remains usable and new launches are blocked. See [terminal recovery](packages/vscode/README.md#recover-terminals-after-reload) for storage scope, asynchronous title recovery, and unavailable-storage behavior.
+
 ## Pi integration
 
 Install the Pi extension from a stable local TreeTY checkout using its absolute path:
@@ -286,7 +298,7 @@ Opening a terminal can also add its explicitly configured project directory to t
 
 `TreeTY: Global Tree Visibility` shows the global root first, followed by local roots, by default. It can instead use the global tree only as a fallback or hide it when folders are open. Empty VS Code windows always show the global root.
 
-Adding the first folder to an empty VS Code window can restart the extension host. Native terminal persistence lets TreeTY reattach the session afterward.
+Adding the first folder to an empty VS Code window can restart the extension host. TreeTY can reattach an identifiable persisted terminal afterward, using its saved recovery token when creation metadata is unavailable.
 
 ## Development
 
@@ -300,6 +312,19 @@ pnpm build
 ```
 
 Open the repository in VS Code, select "Run Extension" from the Run and Debug view, then open the TreeTY Activity Bar container in the Extension Development Host.
+
+Recovery regression tests exercise production host and engine code with restored terminals that expose an empty creation environment, including delayed title restoration. Isolated desktop checks passed on macOS with VS Code 1.146.0. Window reload preserved the same token, session, and process. Full quit and reopen with default revival preserved the token and session with a new process. With persistence disabled, quit and reopen created one replacement with a new token, session, and process. All three recovered before Refresh and ended with one native terminal and one state entry. Deactivation waits for session operations and cleanup before the extension host exits. Earlier window reload checks with persistence enabled and disabled also passed on VS Code 1.109.5.
+
+Separate-window closure was checked with both persistence settings. Disabled persistence allowed one replacement. Default `onExit` retained an unresolved record without an active owner, preserving the explicit Forget choice. Native detach/attach preserved the token and process across windows. Quitting afterward and reopening the destination revived that token with a new process while the saved record still held the original `User` close and dead PID, confirming why automatic replacement remains guarded.
+
+To verify recovery in a disposable Extension Development Host with terminal persistence enabled:
+
+1. Create an `onOpen` terminal, show its terminal panel, record its native title suffix, and confirm that its TreeTY label contains only the configured name.
+2. Reload that window. Confirm that the leaf reveals the original terminal without increasing the terminal count, then check shell activity and close handling.
+3. Create another terminal and rename its TreeTY entry. Confirm that the tree label changes, the existing native suffix survives, and a later restart uses the new name.
+4. Open the same tree in another window and confirm that opening a leaf with a live session elsewhere does not launch a duplicate.
+5. Remove a suffix using VS Code's native rename action, then reload. If VS Code also drops the creation metadata, confirm that automatic replacement pauses. Close the old terminal before using **Forget previous session and start** for an unresolved session.
+6. Quit and reopen VS Code with terminal revival enabled. Confirm that a new shell PID does not discard the saved token, and use Refresh if a restored title arrives late.
 
 After dependencies are installed, package a snapshot without installing it:
 

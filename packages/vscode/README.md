@@ -22,6 +22,34 @@ Run "Developer: Reload Window" after installation, then create new terminals. Th
 
 You can disable auto-update for TreeTY in VS Code's Extensions view to keep Marketplace updates from replacing a local snapshot. Snapshot filenames include a timestamp, while the embedded extension version stays unchanged.
 
+## Recover terminals after reload
+
+New native terminals use the title `TreeTY: <name> [treety:<token>]`. The token contains 128 random bits encoded as 22 base64url characters, generated with Node.js's built-in cryptography and no added dependency. TreeTY rows keep the plain configured name. Renaming an entry in TreeTY changes its tree label, while its existing native terminal keeps the original title and token. The next launch uses the new name.
+
+TreeTY saves a separate file for each token in the extension's shared global storage directory, scoped to the configuration path, workspace, host, node, and session. Exclusive files and a lock for each leaf coordinate launches across windows sharing that storage and scope. A known active window owner prevents another launch. Multiple matching local terminals also block creation. Recovery requires a matching token or creation metadata without conflicting identity. Names, the `TreeTY:` prefix, and process IDs alone do not establish ownership. A saved PID is advisory and may have been reused by another process.
+
+New owner records identify a running extension activation through a local socket handshake. A reused PID cannot impersonate that owner. Missing or refused endpoints release the owner veto, while timeouts and permission errors keep it. If the endpoint can't start, launches and recovery remain available using conservative PID checks. Later ownership writes retry startup and use the handshake when it succeeds. Older records, records written during endpoint failure, and abandoned transaction locks retain PID checks that can block after PID reuse. The owner endpoint closes only after pending session operations finish during deactivation.
+
+The endpoint uses Unix sockets on macOS and Linux, and a named pipe on Windows. Windows recovery has not been validated on a Windows desktop.
+
+VS Code can restore a terminal's title after publishing its handle. TreeTY checks when loading the tree, when a native terminal opens, and when you open a leaf or run **TreeTY: Refresh**. If the title arrives later, open the leaf or refresh again. A timeout, an exited PID, or a terminal's absence from this window doesn't establish that its saved session is stale. VS Code can revive the same saved terminal with a new process.
+
+An unresolved saved record prevents automatic replacement, including `onOpen` launches. Without an active window owner, opening the leaf offers **Forget previous session and start**, even if its saved PID is still alive. Use it only after closing that session's terminal, including in other windows. This retires the saved identity, clears its owner and PID, and starts a new session. The token remains available to recognize a late restored tab and has no time-based expiry, but the retired record alone doesn't block later launches. Forgetting never closes existing terminals, and VS Code may still restore an old native tab later. A known active window owner or matching local terminals cannot be bypassed. Cancel and refresh to retry recovery.
+
+Keep the native title suffix intact. If it was removed or changed, restore the original suffix and refresh. Older unmarked terminals can still be identified while their creation metadata is available. Historical terminals with an empty creation environment and no token cannot be recovered automatically. Missing or corrupt recovery records also limit identification and duplicate prevention. Coordination applies to readable records in the same shared storage scope, and cannot prevent VS Code itself from reviving an old tab after its identity was explicitly forgotten.
+
+TreeTY uses the absolute filesystem storage path supplied by the Node extension host. This supports storage whose URI uses either `file` or `vscode-userdata`. If the filesystem path is unavailable, TreeTY displays a warning and keeps the tree available. Existing terminals can still be recovered from their creation metadata, but new launches are disabled because shared session reservations aren't available.
+
+VS Code reports its native trash action and terminal transfers with the same `User` close reason. TreeTY retains that identity, so reopening may need **Forget previous session and start** even after the old PID exits. Confirmed process exits and TreeTY's **Stop** action clear the corresponding records.
+
+A transferred terminal can later revive in another window with a new PID before TreeTY claims it there. This sequence was verified on VS Code 1.146.0: the saved record still contained `closeReason: "user"` and the dead original PID while the same native token had revived with a new PID. The original dead PID therefore doesn't prove that creating a replacement is safe. Recognizing the old token afterward wouldn't undo a duplicate process already launched.
+
+For `Shutdown`, TreeTY records the originating window's terminal persistence settings. When reopening an unowned session, it retires the saved record automatically if `terminal.integrated.enablePersistentSessions` was disabled. It also retires the record if `terminal.integrated.persistentSessionReviveProcess` was `never` and the recorded PID has exited. These cases allow a new launch without confirmation while retaining the token for late recovery. Otherwise, the record continues to guard reconnection or revival. Changing those settings in another window doesn't change the saved decision.
+
+Disposal also uses an exit status already exposed by VS Code when its close event hasn't arrived. Disposal of a live handle, including Refresh, doesn't imply shutdown. Retired tokens remain on disk to recognize handles arriving during cleanup or later restoration. Their count isn't capped. Registry scans limit concurrent file reads and reuse unchanged contents, but still enumerate retained files.
+
+Recovery preserves the existing status dots, native spinner, and selected-row styling. Environment-relaunch warnings remain separate from terminal ownership and process liveness.
+
 ## Status, activity, and attention
 
 Terminal status uses theme-aware circles: hollow when stopped, amber while starting, neutral when idle, green when running, and red after failure. Status and activity appear in tooltips and screen-reader labels. Terminal rows keep only their names beside the status icons, without redundant inline status text. The former `treety.showStatusDescriptions` setting has been removed.

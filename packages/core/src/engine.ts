@@ -259,7 +259,9 @@ export class TreeTYEngine implements Disposable {
       });
 
       if (signal.aborted) {
-        this.terminalHost.closeSession(hostedTerminalSession.id);
+        if (!hostedTerminalSession.recovered) {
+          this.terminalHost.closeSession(hostedTerminalSession.id);
+        }
 
         return undefined;
       }
@@ -294,11 +296,32 @@ export class TreeTYEngine implements Disposable {
   }
 
   private handleTerminalHostEvent(terminalHostEvent: TerminalHostEvent): void {
-    if (!this.terminalNodeById.has(terminalHostEvent.nodeId)) return;
+    const terminalNode = this.terminalNodeById.get(terminalHostEvent.nodeId);
+
+    if (!terminalNode) return;
 
     const terminalSessionState = this.getTerminalSessionState(
       terminalHostEvent.nodeId,
     );
+
+    if (terminalHostEvent.type === "recovered") {
+      if (
+        terminalSessionState.hostSessionId ||
+        this.terminalSessionCreationByNodeId.has(terminalHostEvent.nodeId)
+      ) {
+        return;
+      }
+
+      const terminalStatus = terminalNode.command ? "running" : "idle";
+
+      this.terminalSessionStore.setTerminalSessionState(
+        terminalHostEvent.nodeId,
+        terminalStatus,
+        terminalHostEvent.sessionId,
+      );
+
+      return;
+    }
 
     if (terminalSessionState.hostSessionId !== terminalHostEvent.sessionId) {
       return;

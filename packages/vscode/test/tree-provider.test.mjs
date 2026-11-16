@@ -39,6 +39,17 @@ nodeTest.test("terminal rows omit descriptions while exposing every status and a
   }
 });
 
+nodeTest.test("recovery explanations appear in tooltips without changing terminal names or descriptions", () => {
+  const recoveryMessage = "A previous terminal session could not be recovered.";
+  const fixture = createTreeProviderFixture({ recoveryMessage });
+  const terminalTreeItem = fixture.treeProvider.getTreeItem(fixture.nodeTreeEntry);
+
+  assert.equal(terminalTreeItem.label, "Service logs");
+  assert.equal(terminalTreeItem.description, undefined);
+  assert.ok(terminalTreeItem.tooltip.includes(recoveryMessage));
+  fixture.treeProvider.dispose();
+});
+
 nodeTest.test("busy terminals keep the native spinner and static animation alternatives", () => {
   for (const configuration of [
     {},
@@ -151,6 +162,7 @@ function createTreeProviderFixture(options = {}) {
       treeState: { version: 1, nodes: {} },
       resolvedTreeConfig: { workspaceDirPath: path.join(testDirPath, "workspace") },
       vscodeTerminalHost: {
+        getSessionRecoveryMessage: () => options.recoveryMessage,
         getSessionActivity: () => options.terminalActivity ?? { state: "unknown", showSpinner: false },
       },
     },
