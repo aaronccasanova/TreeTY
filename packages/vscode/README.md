@@ -22,6 +22,20 @@ Run "Developer: Reload Window" after installation, then create new terminals. Th
 
 You can disable auto-update for TreeTY in VS Code's Extensions view to keep Marketplace updates from replacing a local snapshot. Snapshot filenames include a timestamp, while the embedded extension version stays unchanged.
 
+## Recover terminals after reload
+
+New native terminals use the title `TreeTY: <name> [treety:<token>]`. The token contains 128 random bits encoded as 22 base64url characters, generated with Node.js's built-in cryptography and no added dependency. TreeTY rows keep the plain configured name. Renaming an entry in TreeTY changes its tree label, while its existing native terminal keeps the original title and token. The next launch uses the new name.
+
+TreeTY saves a separate file for each token beneath the extension's `globalStorageUri`, scoped to the configuration path, workspace, host, node, and session. Exclusive file creation prevents one window from overwriting another window's token record. Recovery requires one matching live terminal without conflicting creation metadata. Names, the `TreeTY:` prefix, and process IDs alone do not establish ownership. Duplicate tokens or conflicting identity remain unresolved.
+
+VS Code may restore the title after the terminal handle appears. TreeTY retries discovery up to 20 times at 250 ms intervals (about five seconds) after loading or a native terminal opening. **TreeTY: Refresh** or opening the leaf retries discovery later. A timeout does not prove that the previous terminal has gone away.
+
+An unresolved saved record for the same configuration, workspace, host, and node prevents automatic replacement, including `onOpen` launches. This can also happen when that session is open in another window. Open the leaf to choose **Start a new terminal**, which allows a new launch while leaving every existing terminal untouched. Cancel and refresh to retry recovery instead.
+
+Keep the native title suffix intact. If it was removed or changed, restore the original suffix and refresh, or explicitly start another terminal. Older unmarked terminals can still be identified while their creation metadata is available. Historical terminals with an empty creation environment and no token cannot be recovered automatically. If a recovery record is missing or corrupt, the token alone cannot identify its node or prevent an automatic replacement.
+
+Saved records survive window shutdown and reload. Closing a known terminal clears its own record. TreeTY never prunes records merely because they are absent from one window. Recovery preserves the existing status dots, native spinner, and selected-row styling. Environment-relaunch warnings remain separate from terminal ownership and process liveness.
+
 ## Status, activity, and attention
 
 Terminal status uses theme-aware circles: hollow when stopped, amber while starting, neutral when idle, green when running, and red after failure. Status and activity appear in tooltips and screen-reader labels. Terminal rows keep only their names beside the status icons, without redundant inline status text. The former `treety.showStatusDescriptions` setting has been removed.

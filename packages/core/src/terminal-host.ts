@@ -20,9 +20,16 @@ export interface TerminalLaunchRequest {
 export interface HostedTerminalSession {
   id: string;
   nodeId: string;
+  /** A pre-existing session returned by createSession must survive launch cancellation. */
+  recovered?: boolean;
 }
 
 export type TerminalHostEvent =
+  | {
+      type: "recovered";
+      sessionId: string;
+      nodeId: string;
+    }
   | {
       type: "started";
       sessionId: string;

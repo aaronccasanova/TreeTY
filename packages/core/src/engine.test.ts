@@ -130,6 +130,142 @@ test.test("reattaches restored sessions and reveals them without duplication", a
   assert.equal(treeTYEngine.getTerminalSessionState("worker").status, "running");
 });
 
+test.test("adopts sessions discovered after startup and reveals them without launching", async () => {
+  const terminalHost = new FakeTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.map((treeNode) => ({
+      ...treeNode,
+      restartPolicy: "manual",
+    })),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  const changedNodeIds: string[] = [];
+
+  treeTYEngine.subscribe((terminalSessionState) => {
+    changedNodeIds.push(terminalSessionState.nodeId);
+  });
+
+  for (const nodeId of ["shell", "worker"]) {
+    terminalHost.emitHostEvent({
+      type: "recovered",
+      sessionId: `restored-${nodeId}`,
+      nodeId,
+    });
+
+    await treeTYEngine.openTerminal(nodeId);
+  }
+
+  assert.deepEqual(changedNodeIds, ["shell", "worker"]);
+  assert.deepEqual(terminalHost.terminalLaunchRequests, []);
+  assert.deepEqual(terminalHost.revealedSessionIds, ["restored-shell", "restored-worker"]);
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "idle");
+  assert.equal(treeTYEngine.getTerminalSessionState("worker").status, "running");
+});
+
+test.test("recovery does not replace an existing session or reset its activity", async () => {
+  const terminalHost = new FakeTerminalHost();
+  const treeTYEngine = new TreeTYEngine(resolvedTreeConfig, terminalHost);
+
+  await treeTYEngine.start();
+  await treeTYEngine.openTerminal("shell");
+
+  terminalHost.emitHostEvent({
+    type: "started",
+    sessionId: "session-2",
+    nodeId: "shell",
+  });
+
+  const terminalSessionState = treeTYEngine.getTerminalSessionState("shell");
+  const changedNodeIds: string[] = [];
+
+  treeTYEngine.subscribe((nextTerminalSessionState) => {
+    changedNodeIds.push(nextTerminalSessionState.nodeId);
+  });
+
+  for (const sessionId of ["another-shell", "session-2"]) {
+    terminalHost.emitHostEvent({
+      type: "recovered",
+      sessionId,
+      nodeId: "shell",
+    });
+  }
+
+  assert.deepEqual(treeTYEngine.getTerminalSessionState("shell"), terminalSessionState);
+  assert.deepEqual(changedNodeIds, []);
+  assert.deepEqual(terminalHost.closedSessionIds, []);
+});
+
+test.test("recovery does not overwrite a pending terminal launch", async () => {
+  let finishCreation: (() => void) | undefined;
+  const creationReady = new Promise<void>((resolve) => {
+    finishCreation = resolve;
+  });
+
+  class DeferredTerminalHost extends FakeTerminalHost {
+    public override async createSession(
+      terminalLaunchRequest: TerminalLaunchRequest,
+    ): Promise<HostedTerminalSession> {
+      await creationReady;
+
+      return await super.createSession(terminalLaunchRequest);
+    }
+  }
+
+  const terminalHost = new DeferredTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  const terminalOpen = treeTYEngine.openTerminal("shell");
+
+  await Promise.resolve();
+
+  terminalHost.emitHostEvent({
+    type: "recovered",
+    sessionId: "restored-shell",
+    nodeId: "shell",
+  });
+
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").status, "starting");
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").hostSessionId, undefined);
+
+  finishCreation?.();
+  await terminalOpen;
+
+  assert.equal(treeTYEngine.getTerminalSessionState("shell").hostSessionId, "session-1");
+  assert.deepEqual(terminalHost.revealedSessionIds, ["session-1"]);
+  assert.deepEqual(terminalHost.closedSessionIds, []);
+});
+
+test.test("ignores recovered sessions for unknown nodes", async () => {
+  const terminalHost = new FakeTerminalHost();
+  const treeTYEngine = new TreeTYEngine(resolvedTreeConfig, terminalHost);
+
+  await treeTYEngine.start();
+
+  const changedNodeIds: string[] = [];
+
+  treeTYEngine.subscribe((terminalSessionState) => {
+    changedNodeIds.push(terminalSessionState.nodeId);
+  });
+
+  terminalHost.emitHostEvent({
+    type: "recovered",
+    sessionId: "restored-unknown",
+    nodeId: "unknown",
+  });
+
+  assert.deepEqual(changedNodeIds, []);
+  assert.deepEqual(terminalHost.closedSessionIds, []);
+  assert.throws(() => treeTYEngine.getTerminalSessionState("unknown"), /does not exist/);
+});
+
 test.test("marks non-zero terminal exits as failed", async () => {
   const terminalHost = new FakeTerminalHost();
   const treeTYEngine = new TreeTYEngine(resolvedTreeConfig, terminalHost);
@@ -365,6 +501,40 @@ test.test("stop, removal, and disposal cancel pending launches and close late ho
       assert.throws(() => treeTYEngine.getTerminalSessionState("shell"), /does not exist/);
     }
   }
+});
+
+test.test("cancelling a pending open never closes a pre-existing session recovered by the host", async () => {
+  let finishRecovery: (() => void) | undefined;
+  const recoveryReady = new Promise<void>((resolve) => { finishRecovery = resolve; });
+
+  class RecoveringTerminalHost extends FakeTerminalHost {
+    public override async createSession(
+      terminalLaunchRequest: TerminalLaunchRequest,
+    ): Promise<HostedTerminalSession> {
+      await recoveryReady;
+
+      return { id: "existing-session", nodeId: terminalLaunchRequest.nodeId, recovered: true };
+    }
+  }
+
+  const terminalHost = new RecoveringTerminalHost();
+  const treeTYEngine = new TreeTYEngine({
+    ...resolvedTreeConfig,
+    tree: resolvedTreeConfig.tree.filter((treeNode) => treeNode.id === "shell"),
+  }, terminalHost);
+
+  await treeTYEngine.start();
+
+  const terminalOpen = treeTYEngine.openTerminal("shell");
+
+  await Promise.resolve();
+  treeTYEngine.stopTerminal("shell");
+  finishRecovery?.();
+  await terminalOpen;
+
+  assert.deepEqual(terminalHost.closedSessionIds, []);
+  assert.deepEqual(terminalHost.revealedSessionIds, []);
+  treeTYEngine.dispose();
 });
 
 test.test("restart replaces a pending generation without reattaching its late session", async () => {

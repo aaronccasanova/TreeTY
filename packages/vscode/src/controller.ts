@@ -37,8 +37,9 @@ import type { MoveTreeEditorState } from "./move-tree-state";
 import { resolveNodeSearchEntry } from "./node-search";
 import { revealTerminalLink } from "./terminal-links";
 import type { TerminalLinkManager, TerminalLinkTarget } from "./terminal-links";
+import type { TerminalRecoveryRegistry } from "./terminal-recovery";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
-import { VscodeTerminalHost } from "./vscode-terminal-host";
+import { TerminalRecoveryError, VscodeTerminalHost } from "./vscode-terminal-host";
 import type {
   ConfiguredWorkspaceModel,
   TreeConfigSource,
@@ -138,6 +139,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   public constructor(
     private readonly terminalLinks: TerminalLinkManager,
     private readonly revealNode: (nodeTreeEntry: NodeTreeEntry) => PromiseLike<void>,
+    private readonly terminalRecovery: TerminalRecoveryRegistry,
   ) {
     const workspaceConfigFileWatcher = vscode.workspace.createFileSystemWatcher(
       `**/${configDirName}/${configFileName}`,
@@ -568,10 +570,46 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
     await this.setTerminalAttention(nodeTreeEntry, false);
-    await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(
-      nodeTreeEntry.treeNode.id,
-    );
+
+    try {
+      await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(nodeTreeEntry.treeNode.id);
+    } catch (error) {
+      if (!(error instanceof TerminalRecoveryError)) throw error;
+      if (!(await this.confirmNewTerminal(nodeTreeEntry))) return;
+    }
+
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+  }
+
+  private async confirmNewTerminal(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
+    const choice = await vscode.window.showWarningMessage(
+      `Could not recover the previous session for "${nodeTreeEntry.treeNode.name}".`,
+      {
+        modal: true,
+        detail: "The terminal may still be restoring, have a renamed title, or be open in another window. Starting a new terminal leaves every existing terminal untouched. Cancel and use TreeTY: Refresh to retry recovery.",
+      },
+      "Start a new terminal",
+    );
+
+    if (choice !== "Start a new terminal") return false;
+
+    const currentNodeTreeEntry = resolveNodeSearchEntry(this.workspaceModels, {
+      workspaceId: nodeTreeEntry.workspaceModel.id, nodeId: nodeTreeEntry.treeNode.id,
+    });
+
+    if (!currentNodeTreeEntry || currentNodeTreeEntry.treeNode.kind !== "terminal") {
+      throw new Error("The selected terminal is no longer available.");
+    }
+
+    currentNodeTreeEntry.workspaceModel.vscodeTerminalHost.allowNextSessionCreation(currentNodeTreeEntry.treeNode.id);
+
+    try {
+      await currentNodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(currentNodeTreeEntry.treeNode.id);
+    } finally {
+      currentNodeTreeEntry.workspaceModel.vscodeTerminalHost.revokeSessionCreation(currentNodeTreeEntry.treeNode.id);
+    }
+
+    return true;
   }
 
   public async copyTerminalLink(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -635,9 +673,14 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     if (nodeTreeEntry.treeNode.kind !== "terminal") return;
 
     await this.setTerminalAttention(nodeTreeEntry, false);
-    await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(
-      nodeTreeEntry.treeNode.id,
-    );
+
+    try {
+      await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(nodeTreeEntry.treeNode.id);
+    } catch (error) {
+      if (!(error instanceof TerminalRecoveryError)) throw error;
+      if (!(await this.confirmNewTerminal(nodeTreeEntry))) return;
+    }
+
     await this.syncExplorerDirectory(nodeTreeEntry, false);
   }
 
@@ -834,6 +877,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
 
     if (changedFileKind === "config") {
+      workspaceModel.vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
       await workspaceModel.treeTYEngine.reconcile(resolvedTreeConfig);
     }
 
@@ -958,6 +1002,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       };
     }
 
+    let vscodeTerminalHost: VscodeTerminalHost | undefined;
+
     try {
       const treeConfigFileContent = new TextDecoder().decode(configFileContent);
       const treeConfig = parseTreeConfigContent(treeConfigFileContent);
@@ -969,11 +1015,12 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         workspaceModelLocation.workspaceDirUri.fsPath,
         treeState,
       );
-      const vscodeTerminalHost = new VscodeTerminalHost(
+      vscodeTerminalHost = new VscodeTerminalHost(
         workspaceModelLocation.id,
         workspaceModelLocation.configFileUri.fsPath,
         workspaceModelLocation.configSource,
         this.terminalLinks,
+        this.terminalRecovery,
       );
       vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
       vscodeTerminalHost.onDidChangeActivity((nodeId) =>
@@ -1005,6 +1052,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         vscodeTerminalHost,
       };
     } catch (error) {
+      vscodeTerminalHost?.dispose();
+
       return {
         kind: "invalid",
         ...workspaceModelLocation,

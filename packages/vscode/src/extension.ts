@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 import * as vscode from "vscode";
 
 import { showCommandError, TreeTYController } from "./controller";
@@ -6,6 +8,7 @@ import { NodeSearchPicker } from "./node-search-picker";
 import type { NodeSearchQuickPickItem } from "./node-search-picker";
 import { configureTerminalEnvironment } from "./terminal-environment";
 import { handleTerminalLink, TerminalLinkManager } from "./terminal-links";
+import { TerminalRecoveryFileStorage, TerminalRecoveryRegistry } from "./terminal-recovery";
 import { TreeCollapseController } from "./tree-collapse-controller";
 import { TreeTYTreeProvider } from "./tree-provider";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
@@ -22,10 +25,27 @@ export async function activate(
     resolveExternalUri: async (uri) =>
       (await vscode.env.asExternalUri(vscode.Uri.from(uri))).toString(),
   });
+  const remoteAuthority = vscode.workspace.workspaceFile?.authority ||
+    vscode.workspace.workspaceFolders?.find((folder) => folder.uri.authority)?.uri.authority || "";
+
+  if (extensionContext.globalStorageUri.scheme !== "file") {
+    throw new Error("Terminal recovery requires extension storage on the extension host filesystem.");
+  }
+
+  const terminalRecovery = new TerminalRecoveryRegistry(
+    new TerminalRecoveryFileStorage(path.join(extensionContext.globalStorageUri.fsPath, "terminal-recovery-v1")),
+    JSON.stringify([
+      vscode.env.machineId,
+      vscode.env.remoteName ?? "local",
+      remoteAuthority,
+      extensionContext.globalStorageUri.toString(),
+    ]),
+  );
   const treeTYController = new TreeTYController(
     terminalLinks,
     (nodeTreeEntry) =>
       treeTYTreeView.reveal(nodeTreeEntry, { select: true, focus: false }),
+    terminalRecovery,
   );
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
   const treeTYTreeView: vscode.TreeView<TreeEntry> = vscode.window.createTreeView(

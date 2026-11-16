@@ -37,8 +37,8 @@ Only strings or string arrays in the metadata fields `title`, `description`, `su
 
 The CLI creates and changes persistent tree definitions. The VS Code adapter owns live sessions.
 
-- `manual` is the default restart policy. VS Code recovers a persisted native session when one exists; otherwise it waits until the terminal leaf is opened or restarted.
-- `onOpen` recovers an existing session or launches the terminal as soon as the extension loads the tree.
+- `manual` is the default restart policy. TreeTY recovers an identifiable persisted native session, or waits until the terminal leaf is opened or restarted.
+- `onOpen` recovers an identifiable session or launches the terminal when the extension loads the tree, unless a saved session remains unresolved.
 - Selecting a terminal leaf creates or reveals its native terminal.
 - Stop closes the native terminal but keeps its tree entry.
 - Delete removes the entry after confirmation and closes a running session in the removed subtree.
@@ -46,11 +46,21 @@ The CLI creates and changes persistent tree definitions. The VS Code adapter own
 
 Use `--restart-policy onOpen` in a scripted CLI command only when an automatic process launch is intended. Remember that a startup command stored in configuration executes when the host launches the terminal, not when the CLI writes it.
 
+## Recover native sessions
+
+New native titles end with `[treety:<token>]`, where the token is 128 random bits encoded as 22 base64url characters using Node.js's built-in cryptography. No new dependency is needed. TreeTY labels use the plain configured name. A TreeTY rename updates configuration without changing the existing native title or token. The next launch uses the new name.
+
+Each token has its own exclusively created file beneath the extension's `globalStorageUri`, binding the configuration path, workspace, host, node, and session. Separate files keep concurrent windows from replacing one another's records. Recovery requires exactly one matching live terminal and no conflicting creation metadata. Do not treat a display name, `TreeTY:` prefix, or PID as ownership proof. Do not infer that a record is stale because its terminal is absent from this window: global storage spans windows. Records survive shutdown and reload, and a known terminal's actual close clears only its own record.
+
+Titles can arrive asynchronously. Discovery retries up to 20 times at 250 ms intervals after loading or a native terminal opening. Refreshing TreeTY or opening a leaf retries later. An unresolved record for that configuration, workspace, host, and node blocks automatic replacement even when the session is in another window. Opening the leaf offers **Start a new terminal** as an explicit choice that leaves existing terminals untouched.
+
+If a native title loses its token, restore the original suffix and refresh, or explicitly start a new terminal. Historical unmarked terminals with empty creation environments cannot be recovered automatically. A missing or corrupt record also prevents the token from identifying its node or blocking automatic replacement. Do not close or relaunch ambiguous terminals as a cleanup step. Environment-relaunch warnings do not establish ownership or liveness. Current regression coverage models restored API handles in tests, and does not establish a verified desktop reload.
+
 ## Use native VS Code behavior
 
 An interactive leaf without `shell` uses the user's default VS Code terminal profile. A leaf with `shell` uses that executable and its arguments. A leaf with `command` launches the configured executable directly.
 
-TreeTY marks sessions as stopped, starting, idle, running, or failed. VS Code terminal persistence allows the adapter to reattach matching TreeTY sessions after an extension-host restart rather than creating duplicates.
+TreeTY marks sessions as stopped, starting, idle, running, or failed. After an extension-host restart, the adapter recovers identifiable persisted sessions and pauses automatic replacement when a saved session remains unresolved.
 
 Attention is a separate durable boolean. A terminal that needs attention receives a small `!` decoration with the tooltip `Needs attention`; ancestor groups receive the same decoration while descendants need attention. Opening or revealing the terminal clears it without changing the lifecycle icon or status description.
 
