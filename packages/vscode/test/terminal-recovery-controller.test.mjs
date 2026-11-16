@@ -33,16 +33,41 @@ nodeTest.test("opening an unresolved session explains recovery and cancellation 
   assert.equal(fixture.warnings.length, 1);
   assert.match(fixture.warnings[0][0], /Could not recover the previous session for "Shell"/);
   assert.equal(fixture.warnings[0][1].modal, true);
-  assert.match(fixture.warnings[0][1].detail, /another window/);
-  assert.match(fixture.warnings[0][1].detail, /leaves every existing terminal untouched/);
-  assert.equal(fixture.warnings[0][2], "Start a new terminal");
+  assert.match(fixture.warnings[0][1].detail, /including in other windows/);
+  assert.match(fixture.warnings[0][1].detail, /without closing any existing terminal/);
+  assert.match(fixture.warnings[0][1].detail, /VS Code may still restore the old terminal later/);
+  assert.equal(fixture.warnings[0][2], "Forget previous session and start");
+  assert.equal(fixture.allowedNodeIds.size, 0);
+});
+
+nodeTest.test("opening a session with a known conflict never offers to forget it", async () => {
+  const fixture = createFixture(false);
+
+  fixture.warningChoice = "Forget previous session and start";
+
+  await assert.rejects(fixture.controller.openTerminal(fixture.nodeTreeEntry), /unresolved session/);
+
+  assert.deepEqual(fixture.calls, ["attention", "open"]);
+  assert.equal(fixture.warnings.length, 0);
+  assert.equal(fixture.allowedNodeIds.size, 0);
+});
+
+nodeTest.test("restarting a session with a known conflict never offers to forget it", async () => {
+  const fixture = createFixture(false);
+
+  fixture.warningChoice = "Forget previous session and start";
+
+  await assert.rejects(fixture.controller.restartTerminal(fixture.nodeTreeEntry), /unresolved session/);
+
+  assert.deepEqual(fixture.calls, ["attention", "restart"]);
+  assert.equal(fixture.warnings.length, 0);
   assert.equal(fixture.allowedNodeIds.size, 0);
 });
 
 nodeTest.test("confirmation allows one new launch and revokes the permission afterward", async () => {
   const fixture = createFixture();
 
-  fixture.warningChoice = "Start a new terminal";
+  fixture.warningChoice = "Forget previous session and start";
   await fixture.controller.openTerminal(fixture.nodeTreeEntry);
 
   assert.deepEqual(fixture.calls, [
@@ -62,7 +87,7 @@ nodeTest.test("confirmation revokes unused permission when the session recovers 
       fixture.calls.push("reveal recovered");
     };
 
-    return "Start a new terminal";
+    return "Forget previous session and start";
   };
 
   await fixture.controller.openTerminal(fixture.nodeTreeEntry);
@@ -80,7 +105,7 @@ nodeTest.test("confirmation revokes permission after a failed retry and skips Ex
       throw new Error("launch failed");
     };
 
-    return "Start a new terminal";
+    return "Forget previous session and start";
   };
 
   await assert.rejects(fixture.controller.openTerminal(fixture.nodeTreeEntry), /launch failed/);
@@ -96,7 +121,7 @@ nodeTest.test("confirmation resolves the current workspace model before allowing
   fixture.vscode.window.showWarningMessage = async () => {
     fixture.controller.workspaceModels = [replacementFixture.workspaceModel];
 
-    return "Start a new terminal";
+    return "Forget previous session and start";
   };
 
   await fixture.controller.openTerminal(fixture.nodeTreeEntry);
@@ -113,7 +138,7 @@ nodeTest.test("confirmation rejects a node removed while the prompt was open", a
   fixture.vscode.window.showWarningMessage = async () => {
     fixture.workspaceModel.resolvedTreeConfig.tree = [];
 
-    return "Start a new terminal";
+    return "Forget previous session and start";
   };
 
   await assert.rejects(fixture.controller.openTerminal(fixture.nodeTreeEntry), /no longer available/);
@@ -131,7 +156,7 @@ nodeTest.test("cancelling an unresolved restart skips Explorer sync", async () =
   assert.equal(fixture.allowedNodeIds.size, 0);
 });
 
-function createFixture() {
+function createFixture(recoveryCanForget = true) {
   const fixture = {
     calls: [],
     warnings: [],
@@ -185,7 +210,7 @@ function createFixture() {
         fixture.calls.push("open");
 
         if (!fixture.allowedNodeIds.delete(nodeId)) {
-          throw new controllerModule.exports.TerminalRecoveryError("unresolved session");
+          throw new controllerModule.exports.TerminalRecoveryError("unresolved session", recoveryCanForget);
         }
 
         fixture.calls.push("create");
@@ -193,7 +218,7 @@ function createFixture() {
       async restartTerminal() {
         fixture.calls.push("restart");
 
-        throw new controllerModule.exports.TerminalRecoveryError("unresolved session");
+        throw new controllerModule.exports.TerminalRecoveryError("unresolved session", recoveryCanForget);
       },
     },
   };

@@ -7,6 +7,7 @@ export interface FileTransactionOptions<Document> {
   lockRetryDelayMilliseconds?: number;
   lockStaleMilliseconds?: number;
   lockWaitMilliseconds?: number;
+  preserveLiveLocks?: boolean;
 }
 
 const defaultLockRetryDelayMilliseconds = 20;
@@ -55,7 +56,7 @@ export async function mutateDocumentFile<Document, Result = Document>(
 
     return getTransactionResult(updatedDocument);
   } finally {
-    await releaseFileLock(lockFilePath, lockFileHandle);
+    await releaseFileLock(lockFilePath, lockFileHandle, options.preserveLiveLocks);
   }
 }
 
@@ -83,11 +84,17 @@ async function acquireFileLock<Document>(
     try {
       const lockFileHandle = await fs.open(lockFilePath, "wx");
 
-      await lockFileHandle.writeFile(
-        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
-        "utf8",
-      );
-      await lockFileHandle.sync();
+      try {
+        await lockFileHandle.writeFile(
+          JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+          "utf8",
+        );
+        await lockFileHandle.sync();
+      } catch (error) {
+        await releaseFileLock(lockFilePath, lockFileHandle, options.preserveLiveLocks).catch(() => {});
+
+        throw error;
+      }
 
       return lockFileHandle;
     } catch (error) {
@@ -96,6 +103,7 @@ async function acquireFileLock<Document>(
       const recoveredAbandonedLock = await recoverAbandonedLock(
         lockFilePath,
         options.lockStaleMilliseconds ?? defaultLockStaleMilliseconds,
+        options.preserveLiveLocks,
       );
 
       if (recoveredAbandonedLock) continue;
@@ -117,12 +125,25 @@ async function acquireFileLock<Document>(
 async function recoverAbandonedLock(
   lockFilePath: string,
   lockStaleMilliseconds: number,
+  preserveLiveLocks = false,
 ): Promise<boolean> {
   try {
     const lockFileStat = await fs.stat(lockFilePath);
 
     if (Date.now() - lockFileStat.mtimeMs <= lockStaleMilliseconds) {
       return false;
+    }
+
+    if (preserveLiveLocks) {
+      const lockFileContent = await fs.readFile(lockFilePath, "utf8");
+
+      if (!getIsLockOwnerDead(lockFileContent)) return false;
+
+      const currentLockFileStat = await fs.stat(lockFilePath);
+
+      if (currentLockFileStat.dev !== lockFileStat.dev || currentLockFileStat.ino !== lockFileStat.ino) {
+        return false;
+      }
     }
 
     await fs.unlink(lockFilePath);
@@ -138,13 +159,51 @@ async function recoverAbandonedLock(
 async function releaseFileLock(
   lockFilePath: string,
   lockFileHandle: fs.FileHandle,
+  preserveLiveLocks = false,
 ): Promise<void> {
-  await lockFileHandle.close();
+  let heldLockFileStat;
 
   try {
+    if (preserveLiveLocks) heldLockFileStat = await lockFileHandle.stat();
+  } finally {
+    await lockFileHandle.close();
+  }
+
+  try {
+    if (heldLockFileStat) {
+      const currentLockFileStat = await fs.stat(lockFilePath);
+
+      if (currentLockFileStat.dev !== heldLockFileStat.dev || currentLockFileStat.ino !== heldLockFileStat.ino) {
+        return;
+      }
+    }
+
     await fs.unlink(lockFilePath);
   } catch (error) {
     if (getErrorCode(error) !== "ENOENT") throw error;
+  }
+}
+
+function getIsLockOwnerDead(lockFileContent: string): boolean {
+  let lockOwner: unknown;
+
+  try {
+    lockOwner = JSON.parse(lockFileContent);
+  } catch {
+    return false;
+  }
+
+  if (typeof lockOwner !== "object" || lockOwner === null || !("pid" in lockOwner) ||
+    typeof lockOwner.pid !== "number" || !Number.isSafeInteger(lockOwner.pid) || lockOwner.pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(lockOwner.pid, 0);
+
+    return false;
+  } catch (error) {
+    return getErrorCode(error) === "ESRCH";
   }
 }
 

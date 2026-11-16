@@ -44,11 +44,31 @@ interface SessionActivity {
   explicitActivity?: TreeNodeActivity;
 }
 
+interface TerminalCandidate {
+  terminal: vscode.Terminal;
+  metadata: TerminalMetadata | undefined;
+  token: string | undefined;
+}
+
+interface TerminalIdentityCounts {
+  nodes: Map<string, number>;
+  sessions: Map<string, number>;
+  tokens: Map<string, number>;
+}
+
 const workspaceIdEnvironmentName = "TREETY_WORKSPACE_ID";
 
-export class TerminalRecoveryError extends Error {}
+export class TerminalRecoveryError extends Error {
+  public constructor(message: string, public readonly canForget = false) {
+    super(message);
+  }
+}
 
 export class VscodeTerminalHost implements TerminalHost {
+  private readonly ownerBindingId = crypto.randomUUID();
+
+  private readonly pendingSessionTokens = new Set<string>();
+
   private readonly terminalBySessionId = new Map<string, vscode.Terminal>();
 
   private readonly metadataByTerminal = new Map<vscode.Terminal, TerminalMetadata>();
@@ -63,9 +83,7 @@ export class VscodeTerminalHost implements TerminalHost {
 
   private sessionDiscovery: Promise<HostedTerminalSession[]> | undefined;
 
-  private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
-
-  private recoveryAttempts = 0;
+  private terminalChangeVersion = 0;
 
   private disposed = false;
 
@@ -95,7 +113,7 @@ export class VscodeTerminalHost implements TerminalHost {
     private readonly terminalRecovery: TerminalRecoveryRegistry,
   ) {
     this.vscodeDisposables = [
-      vscode.window.onDidOpenTerminal(() => this.scheduleRecovery()),
+      vscode.window.onDidOpenTerminal((terminal) => this.handleOpenedTerminal(terminal)),
       vscode.window.onDidCloseTerminal((terminal) =>
         this.handleClosedTerminal(terminal),
       ),
@@ -107,7 +125,6 @@ export class VscodeTerminalHost implements TerminalHost {
       ),
     ];
 
-    this.scheduleRecovery();
   }
 
   public getSessions(): Promise<HostedTerminalSession[]> {
@@ -133,15 +150,15 @@ export class VscodeTerminalHost implements TerminalHost {
   public async createSession(
     terminalLaunchRequest: TerminalLaunchRequest,
   ): Promise<HostedTerminalSession> {
-    const sessionCreationAllowed = this.allowedSessionCreations.delete(terminalLaunchRequest.nodeId);
+    const forgetPreviousSession = this.allowedSessionCreations.delete(terminalLaunchRequest.nodeId);
     const hostedTerminalSessions = await this.getSessions();
-    const existingSession = hostedTerminalSessions.find((session) => session.nodeId === terminalLaunchRequest.nodeId);
+    const existingHostedTerminalSession = hostedTerminalSessions.find((hostedTerminalSession) =>
+      hostedTerminalSession.nodeId === terminalLaunchRequest.nodeId,
+    );
 
     terminalLaunchRequest.signal?.throwIfAborted();
 
-    if (existingSession) return { ...existingSession, recovered: true };
-
-    this.assertSessionCreationAllowed(terminalLaunchRequest.nodeId, sessionCreationAllowed);
+    if (existingHostedTerminalSession) return { ...existingHostedTerminalSession, recovered: true };
 
     const sessionId = crypto.randomUUID();
     let sessionUri: string | undefined;
@@ -158,20 +175,66 @@ export class VscodeTerminalHost implements TerminalHost {
 
     terminalLaunchRequest.signal?.throwIfAborted();
 
-    const recoveryRecord = await this.terminalRecovery.createRecord({
-      configFilePath: this.configFilePath,
-      workspaceId: this.workspaceId,
-      sessionId,
-      nodeId: terminalLaunchRequest.nodeId,
-    });
+    let reservedTerminalRecoveryRecord: TerminalRecoveryRecord | undefined;
+    let terminalRecoveryRecord: TerminalRecoveryRecord;
+    const retiredTerminalRecoveryRecords: TerminalRecoveryRecord[] = [];
+
+    try {
+      terminalRecoveryRecord = await this.terminalRecovery.runWithNodeLock({
+        configFilePath: this.configFilePath, nodeId: terminalLaunchRequest.nodeId,
+      }, async () => {
+        await this.terminalRecovery.refresh(true);
+
+        terminalLaunchRequest.signal?.throwIfAborted();
+
+        if (this.disposed) throw new Error("The terminal host was disposed before launch.");
+
+        const unresolvedRecords = this.assertSessionCreationAllowed(
+          terminalLaunchRequest.nodeId, forgetPreviousSession,
+        );
+
+        for (const terminalRecoveryRecord of unresolvedRecords) {
+          await this.terminalRecovery.updateRecord(terminalRecoveryRecord.token, {
+            retired: true, ownerId: undefined, ownerProcessId: undefined, ownerBindingId: undefined,
+          });
+          retiredTerminalRecoveryRecords.push(terminalRecoveryRecord);
+        }
+
+        const terminalRecoveryRecord = await this.terminalRecovery.createRecord({
+          configFilePath: this.configFilePath,
+          workspaceId: this.workspaceId,
+          sessionId,
+          nodeId: terminalLaunchRequest.nodeId,
+          ownerBindingId: this.ownerBindingId,
+        });
+        reservedTerminalRecoveryRecord = terminalRecoveryRecord;
+        this.pendingSessionTokens.add(terminalRecoveryRecord.token);
+
+        return terminalRecoveryRecord;
+      });
+    } catch (error) {
+      if (reservedTerminalRecoveryRecord) {
+        this.pendingSessionTokens.delete(reservedTerminalRecoveryRecord.token);
+        await this.clearSession({
+          ...reservedTerminalRecoveryRecord, recoveryToken: reservedTerminalRecoveryRecord.token,
+        }).catch(reportActivityError);
+      }
+
+      throw error;
+    }
+
+    // Retired identities remain readable if VS Code revives an old tab later.
+    await Promise.all(retiredTerminalRecoveryRecords.map((terminalRecoveryRecord) =>
+      clearTreeNodeSession(this.configFilePath, terminalRecoveryRecord.nodeId, terminalRecoveryRecord.sessionId),
+    )).catch(reportActivityError);
     const terminalOptions = buildTerminalOptions(
       terminalLaunchRequest,
-      recoveryRecord,
+      terminalRecoveryRecord,
       this.configFilePath,
       this.configSource,
       sessionUri,
     );
-    const terminalMetadata: TerminalMetadata = { ...recoveryRecord, recoveryToken: recoveryRecord.token };
+    const terminalMetadata: TerminalMetadata = { ...terminalRecoveryRecord, recoveryToken: terminalRecoveryRecord.token };
 
     try {
       this.treeState = await registerTreeNodeSession(
@@ -182,34 +245,39 @@ export class VscodeTerminalHost implements TerminalHost {
       if (this.disposed) throw new Error("The terminal host was disposed before launch.");
 
       // A restored handle may arrive while persistence waits. Recheck before spawning a process.
-      const recoveredSessions = await this.getSessions();
-      const recoveredSession = recoveredSessions.find((session) => session.nodeId === terminalLaunchRequest.nodeId);
+      const recoveredHostedTerminalSessions = await this.getSessions();
+      const recoveredHostedTerminalSession = recoveredHostedTerminalSessions.find((hostedTerminalSession) =>
+        hostedTerminalSession.nodeId === terminalLaunchRequest.nodeId,
+      );
 
-      if (recoveredSession) {
+      if (recoveredHostedTerminalSession) {
         await this.clearSession(terminalMetadata);
 
         terminalLaunchRequest.signal?.throwIfAborted();
 
-        return { ...recoveredSession, recovered: true };
+        return { ...recoveredHostedTerminalSession, recovered: true };
       }
 
       terminalLaunchRequest.signal?.throwIfAborted();
 
       if (this.disposed) throw new Error("The terminal host was disposed before launch.");
 
-      this.assertSessionCreationAllowed(terminalLaunchRequest.nodeId, sessionCreationAllowed, recoveryRecord.token);
+      this.assertSessionCreationAllowed(terminalLaunchRequest.nodeId, false, terminalRecoveryRecord.token);
 
       const terminal = vscode.window.createTerminal(terminalOptions);
       this.metadataByTerminal.set(terminal, terminalMetadata);
       this.terminalBySessionId.set(sessionId, terminal);
       this.createSessionActivity(sessionId, terminalLaunchRequest.nodeId);
       this.recoveryMessageByNodeId.delete(terminalLaunchRequest.nodeId);
+      this.trackTerminalProcess(terminal, terminalMetadata);
 
       return { id: sessionId, nodeId: terminalLaunchRequest.nodeId };
     } catch (error) {
       await this.clearSession(terminalMetadata);
 
       throw error;
+    } finally {
+      this.pendingSessionTokens.delete(terminalRecoveryRecord.token);
     }
   }
 
@@ -254,7 +322,10 @@ export class VscodeTerminalHost implements TerminalHost {
 
   public dispose(): void {
     this.disposed = true;
-    clearTimeout(this.recoveryTimer);
+
+    for (const terminalMetadata of this.metadataByTerminal.values()) {
+      void this.releaseSessionOwnership(terminalMetadata).catch(reportActivityError);
+    }
 
     for (const vscodeDisposable of this.vscodeDisposables) {
       vscodeDisposable.dispose();
@@ -276,32 +347,84 @@ export class VscodeTerminalHost implements TerminalHost {
 
   private assertSessionCreationAllowed(
     nodeId: string,
-    sessionCreationAllowed: boolean,
+    forgetPreviousSession: boolean,
     pendingToken?: string,
-  ): void {
-    if (sessionCreationAllowed) return;
-
-    const unresolvedRecords = this.terminalRecovery.getRecords({
-      configFilePath: this.configFilePath, workspaceId: this.workspaceId,
-    }).filter((record) => record.nodeId === nodeId && record.token !== pendingToken &&
-      !this.closedSessionIds.has(record.sessionId) &&
-      ![...this.closingTerminals].some((terminal) =>
-        this.metadataByTerminal.get(terminal)?.recoveryToken === record.token,
-      ),
+  ): TerminalRecoveryRecord[] {
+    const terminalCandidates = this.getTerminalCandidates();
+    const matchingTerminals = terminalCandidates.filter((terminalCandidate) =>
+      terminalCandidate.metadata?.nodeId === nodeId,
     );
 
-    const hasUnresolvedTerminal = vscode.window.terminals.some((terminal) =>
-      terminal.exitStatus === undefined && !this.closingTerminals.has(terminal) &&
-      this.resolveTerminalMetadata(terminal)?.nodeId === nodeId,
-    );
-
-    if (unresolvedRecords.length > 0 || hasUnresolvedTerminal) {
-      const message = "A previous terminal session could not be recovered. It may still be restoring, have a renamed title, or be open in another window. Refresh TreeTY to retry recovery, or open this leaf to choose whether to start a new terminal.";
-      this.recoveryMessageByNodeId.set(nodeId, message);
-      this.activityChangeEmitter.fire(nodeId);
-
-      throw new TerminalRecoveryError(message);
+    if (matchingTerminals.length > 0) {
+      this.throwRecoveryError(nodeId,
+        matchingTerminals.length > 1
+          ? "Multiple terminals claim this leaf. Close the extra terminal tabs, then refresh TreeTY. A new terminal cannot be started while these tabs exist."
+          : "A terminal for this leaf is already open or being recovered. Refresh TreeTY to attach to it.",
+      );
     }
+
+    const terminalRecoveryRecords = this.terminalRecovery.getRecordsForNode({
+      configFilePath: this.configFilePath, nodeId,
+    }).filter((terminalRecoveryRecord) => terminalRecoveryRecord.token !== pendingToken &&
+      !this.closedSessionIds.has(terminalRecoveryRecord.sessionId),
+    );
+
+    for (const terminalRecoveryRecord of terminalRecoveryRecords) {
+      const recordLiveness = this.terminalRecovery.getRecordLiveness(terminalRecoveryRecord);
+
+      if (recordLiveness === "other-window") {
+        this.throwRecoveryError(nodeId,
+          "This leaf is open or starting in another VS Code window. Use or close its terminal in that window, then refresh TreeTY.",
+        );
+      }
+
+      if (recordLiveness === "owned" || recordLiveness === "running") {
+        this.throwRecoveryError(nodeId,
+          "This leaf already has a running or starting terminal. Its tab may be restoring or have a renamed title. Close that terminal before starting another, or refresh TreeTY to retry attachment.",
+        );
+      }
+    }
+
+    const unresolvedRecords = terminalRecoveryRecords.filter((terminalRecoveryRecord) =>
+      !terminalRecoveryRecord.retired,
+    );
+
+    if (unresolvedRecords.length > 0 && !forgetPreviousSession) {
+      this.throwRecoveryError(nodeId,
+        "A previous terminal session could not be recovered. Refresh TreeTY to retry. If you have closed the old terminal in every window, open this leaf to forget its saved session and start again.", true,
+      );
+    }
+
+    return unresolvedRecords;
+  }
+
+  private throwRecoveryError(nodeId: string, recoveryMessage: string, canForget = false): never {
+    this.recoveryMessageByNodeId.set(nodeId, recoveryMessage);
+    this.activityChangeEmitter.fire(nodeId);
+
+    throw new TerminalRecoveryError(recoveryMessage, canForget);
+  }
+
+  private getTerminalCandidates(): TerminalCandidate[] {
+    const terminalRecoveryRecords = this.terminalRecovery.getRecords({
+      configFilePath: this.configFilePath, workspaceId: this.workspaceId,
+    });
+    const recoveryRecordsBySessionId = new Map<string, TerminalRecoveryRecord[]>();
+
+    for (const terminalRecoveryRecord of terminalRecoveryRecords) {
+      const sessionRecoveryRecords = recoveryRecordsBySessionId.get(terminalRecoveryRecord.sessionId) ?? [];
+
+      sessionRecoveryRecords.push(terminalRecoveryRecord);
+      recoveryRecordsBySessionId.set(terminalRecoveryRecord.sessionId, sessionRecoveryRecords);
+    }
+
+    return vscode.window.terminals.filter((terminal) =>
+      terminal.exitStatus === undefined && !this.closingTerminals.has(terminal),
+    ).map((terminal) => ({
+      terminal,
+      metadata: this.resolveTerminalMetadata(terminal, recoveryRecordsBySessionId),
+      token: getTerminalRecoveryToken(terminal.name),
+    }));
   }
 
   private async discoverSessions(): Promise<HostedTerminalSession[]> {
@@ -309,45 +432,54 @@ export class VscodeTerminalHost implements TerminalHost {
 
     if (this.disposed) return [];
 
-    const liveTerminals = vscode.window.terminals.filter((terminal) =>
-      terminal.exitStatus === undefined && !this.closingTerminals.has(terminal),
-    );
-    const terminalCandidates = liveTerminals.map((terminal) => ({
-      terminal,
-      metadata: this.resolveTerminalMetadata(terminal),
-    }));
+    // Resolve each handle and count identities once per pass, rather than once per candidate.
+    let terminalCandidates = this.getTerminalCandidates();
+    let identityCounts = buildTerminalIdentityCounts(terminalCandidates);
+    let terminalChangeVersion = this.terminalChangeVersion;
     const hostedTerminalSessions: HostedTerminalSession[] = [];
 
-    for (const candidate of terminalCandidates) {
-      const terminalMetadata = candidate.metadata;
+    for (const terminalCandidate of terminalCandidates) {
+      const terminalMetadata = terminalCandidate.metadata;
 
       if (this.disposed) break;
       if (!terminalMetadata) continue;
-      if (!getTerminalNode(this.treeNodes, terminalMetadata.nodeId)) continue;
+      if (getTerminalNode(this.treeNodes, terminalMetadata.nodeId)?.kind !== "terminal") continue;
 
-      const alreadyBound = this.metadataByTerminal.has(candidate.terminal);
-      const hasDuplicateIdentity = terminalCandidates.some((otherCandidate) =>
-        otherCandidate.terminal !== candidate.terminal && otherCandidate.metadata &&
-        (otherCandidate.metadata.nodeId === terminalMetadata.nodeId ||
-          otherCandidate.metadata.sessionId === terminalMetadata.sessionId),
-      );
-      const hasDuplicateToken = terminalMetadata.recoveryToken && liveTerminals.some((terminal) =>
-        terminal !== candidate.terminal &&
-        getTerminalRecoveryToken(terminal.name) === terminalMetadata.recoveryToken,
-      );
+      const alreadyBound = this.metadataByTerminal.has(terminalCandidate.terminal);
 
-      // An existing object binding remains authoritative. Never choose between new ambiguous handles.
-      if (!alreadyBound && (hasDuplicateIdentity || hasDuplicateToken)) continue;
+      if (!alreadyBound && getHasDuplicateIdentity(terminalMetadata, identityCounts)) {
+        this.recoveryMessageByNodeId.set(terminalMetadata.nodeId,
+          "Multiple terminals claim this leaf. Close the extra terminal tabs, then refresh TreeTY.",
+        );
+
+        continue;
+      }
 
       if (!alreadyBound) {
-        this.metadataByTerminal.set(candidate.terminal, terminalMetadata);
+        if (!(await this.claimSessionOwnership(terminalMetadata))) continue;
+
+        if (this.disposed) {
+          await this.releaseSessionOwnership(terminalMetadata);
+
+          break;
+        }
+
+        if (!vscode.window.terminals.includes(terminalCandidate.terminal) ||
+          terminalCandidate.terminal.exitStatus !== undefined) {
+          await this.finishClosedSession(terminalCandidate.terminal, terminalMetadata);
+
+          continue;
+        }
+
+        this.metadataByTerminal.set(terminalCandidate.terminal, terminalMetadata);
 
         try {
           this.treeState = await registerTreeNodeSession(
             this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId,
           );
         } catch (error) {
-          this.metadataByTerminal.delete(candidate.terminal);
+          this.metadataByTerminal.delete(terminalCandidate.terminal);
+          await this.releaseSessionOwnership(terminalMetadata);
 
           throw error;
         }
@@ -355,40 +487,35 @@ export class VscodeTerminalHost implements TerminalHost {
 
       if (this.disposed) break;
 
-      // Registration can wait for a file lock while the native terminal closes.
-      if (!vscode.window.terminals.includes(candidate.terminal) || candidate.terminal.exitStatus !== undefined) {
-        this.metadataByTerminal.delete(candidate.terminal);
+      if (!vscode.window.terminals.includes(terminalCandidate.terminal) || terminalCandidate.terminal.exitStatus !== undefined) {
+        this.metadataByTerminal.delete(terminalCandidate.terminal);
 
-        if (candidate.terminal.exitStatus?.reason !== vscode.TerminalExitReason.Shutdown) {
-          await this.clearSession(terminalMetadata);
-        }
+        // Registration may finish after the close callback cleared the old state.
+        await this.finishClosedSession(terminalCandidate.terminal, terminalMetadata);
 
         continue;
       }
 
-      if (!alreadyBound && vscode.window.terminals.some((terminal) => {
-        if (terminal === candidate.terminal || terminal.exitStatus !== undefined || this.closingTerminals.has(terminal)) {
-          return false;
-        }
+      if (terminalChangeVersion !== this.terminalChangeVersion) {
+        terminalCandidates = this.getTerminalCandidates();
+        identityCounts = buildTerminalIdentityCounts(terminalCandidates);
+        terminalChangeVersion = this.terminalChangeVersion;
+      }
 
-        const otherMetadata = this.resolveTerminalMetadata(terminal);
-
-        return (terminalMetadata.recoveryToken !== undefined &&
-          getTerminalRecoveryToken(terminal.name) === terminalMetadata.recoveryToken) ||
-          (otherMetadata !== undefined &&
-            (otherMetadata.sessionId === terminalMetadata.sessionId || otherMetadata.nodeId === terminalMetadata.nodeId));
-      })) {
-        this.metadataByTerminal.delete(candidate.terminal);
+      if (!alreadyBound && getHasDuplicateIdentity(terminalMetadata, identityCounts)) {
+        this.metadataByTerminal.delete(terminalCandidate.terminal);
+        await this.releaseSessionOwnership(terminalMetadata);
 
         continue;
       }
 
-      this.terminalBySessionId.set(terminalMetadata.sessionId, candidate.terminal);
+      this.terminalBySessionId.set(terminalMetadata.sessionId, terminalCandidate.terminal);
       this.createSessionActivity(terminalMetadata.sessionId, terminalMetadata.nodeId);
       this.recoveryMessageByNodeId.delete(terminalMetadata.nodeId);
       hostedTerminalSessions.push({ id: terminalMetadata.sessionId, nodeId: terminalMetadata.nodeId });
 
       if (!alreadyBound) {
+        this.trackTerminalProcess(terminalCandidate.terminal, terminalMetadata);
         this.emitTerminalHostEvent({
           type: "recovered", sessionId: terminalMetadata.sessionId, nodeId: terminalMetadata.nodeId,
         });
@@ -403,23 +530,140 @@ export class VscodeTerminalHost implements TerminalHost {
     });
   }
 
-  private resolveTerminalMetadata(terminal: vscode.Terminal): TerminalMetadata | undefined {
-    const boundMetadata = this.metadataByTerminal.get(terminal);
+  private async claimSessionOwnership(terminalMetadata: TerminalMetadata): Promise<boolean> {
+    if (!terminalMetadata.recoveryToken) return true;
 
-    if (boundMetadata) return boundMetadata;
+    return this.terminalRecovery.runWithNodeLock({
+      configFilePath: this.configFilePath, nodeId: terminalMetadata.nodeId,
+    }, async () => {
+      await this.terminalRecovery.refreshRecord(terminalMetadata.recoveryToken!);
+
+      const terminalRecoveryRecord = this.terminalRecovery.getRecord(terminalMetadata.recoveryToken!);
+
+      if (!terminalRecoveryRecord || this.disposed) return false;
+
+      // Retirement allows a later launch, so a revived retired token needs a fresh cross-window check.
+      if (terminalRecoveryRecord.retired) await this.terminalRecovery.refresh(true);
+
+      const otherRecoveryRecords = this.terminalRecovery.getRecordsForNode({
+        configFilePath: this.configFilePath, nodeId: terminalMetadata.nodeId,
+      }).filter((otherRecoveryRecord) => otherRecoveryRecord.token !== terminalRecoveryRecord.token);
+      const hasOtherLiveSession = otherRecoveryRecords.some((otherRecoveryRecord) => {
+        const recordLiveness = this.terminalRecovery.getRecordLiveness(otherRecoveryRecord);
+
+        return recordLiveness === "other-window" || recordLiveness === "running" ||
+          (recordLiveness === "owned" && !this.pendingSessionTokens.has(otherRecoveryRecord.token));
+      });
+
+      if (hasOtherLiveSession) {
+        this.recoveryMessageByNodeId.set(terminalMetadata.nodeId,
+          "Another terminal already owns this leaf. Close the extra terminal tabs, then refresh TreeTY.",
+        );
+
+        return false;
+      }
+
+      if (this.terminalRecovery.getRecordLiveness(terminalRecoveryRecord) === "other-window") {
+        this.recoveryMessageByNodeId.set(terminalMetadata.nodeId,
+          "This leaf is owned by another VS Code window. Close the duplicate tab or its terminal in the other window, then refresh TreeTY.",
+        );
+
+        return false;
+      }
+
+      await this.terminalRecovery.updateRecord(terminalRecoveryRecord.token, {
+        ownerId: this.terminalRecovery.ownerId,
+        ownerProcessId: this.terminalRecovery.ownerProcessId,
+        ownerBindingId: this.ownerBindingId,
+        retired: false,
+      });
+
+      return true;
+    });
+  }
+
+  private trackTerminalProcess(terminal: vscode.Terminal, terminalMetadata: TerminalMetadata): void {
+    if (!terminalMetadata.recoveryToken) return;
+
+    void Promise.resolve(terminal.processId).then(async (terminalProcessId) => {
+      if (!terminalProcessId || this.disposed || this.metadataByTerminal.get(terminal) !== terminalMetadata) return;
+
+      await this.terminalRecovery.runWithNodeLock({
+        configFilePath: this.configFilePath, nodeId: terminalMetadata.nodeId,
+      }, async () => {
+        await this.terminalRecovery.refreshRecord(terminalMetadata.recoveryToken!);
+
+        const terminalRecoveryRecord = this.terminalRecovery.getRecord(terminalMetadata.recoveryToken!);
+
+        if (!terminalRecoveryRecord || this.disposed || this.metadataByTerminal.get(terminal) !== terminalMetadata ||
+          terminalRecoveryRecord.ownerId !== this.terminalRecovery.ownerId) return;
+
+        await this.terminalRecovery.updateRecord(terminalRecoveryRecord.token, { terminalProcessId });
+      });
+    }).catch(reportActivityError);
+  }
+
+  private async releaseSessionOwnership(terminalMetadata: TerminalMetadata, clearState = false): Promise<void> {
+    if (!terminalMetadata.recoveryToken) {
+      if (clearState) {
+        await clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId);
+      }
+
+      return;
+    }
+
+    await this.terminalRecovery.runWithNodeLock({
+      configFilePath: this.configFilePath, nodeId: terminalMetadata.nodeId,
+    }, async () => {
+      await this.terminalRecovery.refreshRecord(terminalMetadata.recoveryToken!);
+
+      const terminalRecoveryRecord = this.terminalRecovery.getRecord(terminalMetadata.recoveryToken!);
+
+      if (terminalRecoveryRecord?.ownerId !== undefined &&
+        (terminalRecoveryRecord.ownerId !== this.terminalRecovery.ownerId ||
+          terminalRecoveryRecord.ownerBindingId !== this.ownerBindingId)) return;
+
+      // A transferred session must not have its new window's state cleared after that window claims it.
+      const cleanupResults = await Promise.allSettled([
+        clearState
+          ? clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId)
+          : Promise.resolve(),
+        terminalRecoveryRecord
+          ? this.terminalRecovery.updateRecord(terminalRecoveryRecord.token, {
+            ownerId: undefined, ownerProcessId: undefined, ownerBindingId: undefined,
+          })
+          : Promise.resolve(),
+      ]);
+      const cleanupErrors = cleanupResults.flatMap((cleanupResult) =>
+        cleanupResult.status === "rejected" ? [cleanupResult.reason] : [],
+      );
+
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, "Could not finish terminal session cleanup.");
+      }
+    });
+  }
+
+  private resolveTerminalMetadata(
+    terminal: vscode.Terminal,
+    recoveryRecordsBySessionId: Map<string, TerminalRecoveryRecord[]>,
+  ): TerminalMetadata | undefined {
+    const boundTerminalMetadata = this.metadataByTerminal.get(terminal);
+
+    if (boundTerminalMetadata) return boundTerminalMetadata;
 
     const recoveryToken = getTerminalRecoveryToken(terminal.name);
     const terminalEnvironment = "env" in terminal.creationOptions ? terminal.creationOptions.env : undefined;
 
-    if (recoveryToken) {
-      const recoveryRecord = this.terminalRecovery.getRecord(recoveryToken);
+    if (recoveryToken && this.terminalRecovery.isAvailable) {
+      const terminalRecoveryRecord = this.terminalRecovery.getRecord(recoveryToken);
 
-      if (!recoveryRecord || recoveryRecord.workspaceId !== this.workspaceId ||
-        recoveryRecord.configFilePath !== this.configFilePath) return undefined;
+      if (!terminalRecoveryRecord || terminalRecoveryRecord.workspaceId !== this.workspaceId ||
+        terminalRecoveryRecord.configFilePath !== this.configFilePath) return undefined;
 
       const expectedEnvironment = {
-        [treeTYSessionIdEnvironmentName]: recoveryRecord.sessionId,
-        [treeTYNodeIdEnvironmentName]: recoveryRecord.nodeId,
+        [treeTYSessionIdEnvironmentName]: terminalRecoveryRecord.sessionId,
+        [treeTYNodeIdEnvironmentName]: terminalRecoveryRecord.nodeId,
         [workspaceIdEnvironmentName]: this.workspaceId,
         TREETY_CONFIG_FILE: this.configFilePath,
         TREETY_CONFIG_SOURCE: this.configSource,
@@ -431,7 +675,7 @@ export class VscodeTerminalHost implements TerminalHost {
         }
       }
 
-      return { ...recoveryRecord, recoveryToken };
+      return { ...terminalRecoveryRecord, recoveryToken };
     }
 
     const terminalMetadata = getTerminalMetadata(terminal);
@@ -440,48 +684,54 @@ export class VscodeTerminalHost implements TerminalHost {
     if (terminalEnvironment?.TREETY_CONFIG_FILE !== undefined &&
       terminalEnvironment.TREETY_CONFIG_FILE !== this.configFilePath) return undefined;
 
-    const matchingRecords = this.terminalRecovery.getRecords({
-      configFilePath: this.configFilePath, workspaceId: this.workspaceId,
-    }).filter((record) => record.nodeId === terminalMetadata.nodeId &&
-      record.sessionId === terminalMetadata.sessionId,
-    );
+    const matchingTerminalRecoveryRecords = (recoveryRecordsBySessionId.get(terminalMetadata.sessionId) ?? [])
+      .filter((terminalRecoveryRecord) => terminalRecoveryRecord.nodeId === terminalMetadata.nodeId);
 
-    if (matchingRecords.length > 1) return undefined;
+    if (matchingTerminalRecoveryRecords.length > 1) return undefined;
 
-    return { ...terminalMetadata, recoveryToken: matchingRecords[0]?.token };
+    return { ...terminalMetadata, recoveryToken: matchingTerminalRecoveryRecords[0]?.token };
   }
 
-  private scheduleRecovery(): void {
-    if (this.disposed) return;
+  private handleOpenedTerminal(terminal: vscode.Terminal): void {
+    this.terminalChangeVersion += 1;
 
-    this.recoveryAttempts = 20;
-    this.scheduleRecoveryAttempt();
-  }
+    const recoveryToken = getTerminalRecoveryToken(terminal.name);
+    const terminalMetadata = getTerminalMetadata(terminal);
 
-  private scheduleRecoveryAttempt(): void {
-    if (this.disposed || this.recoveryTimer || this.recoveryAttempts === 0) return;
+    // Unrelated terminal opens never start polling or disk scans for every tree.
+    if (!recoveryToken && terminalMetadata?.workspaceId !== this.workspaceId) return;
 
-    // The public API has no title-change event. Retry briefly, then allow Refresh/open to retry.
-    this.recoveryTimer = setTimeout(() => {
-      this.recoveryTimer = undefined;
-      this.recoveryAttempts -= 1;
-      void this.getSessions().catch(reportActivityError).finally(() => this.scheduleRecoveryAttempt());
-    }, 250);
+    void (async () => {
+      if (recoveryToken && !this.terminalRecovery.getRecord(recoveryToken)) {
+        await this.terminalRecovery.refreshRecord(recoveryToken);
+      }
+
+      if (this.disposed) return;
+
+      const terminalRecoveryRecord = recoveryToken ? this.terminalRecovery.getRecord(recoveryToken) : undefined;
+
+      if (recoveryToken && (terminalRecoveryRecord?.configFilePath !== this.configFilePath ||
+        terminalRecoveryRecord.workspaceId !== this.workspaceId)) return;
+
+      await this.getSessions();
+    })().catch(reportActivityError);
   }
 
   private handleClosedTerminal(terminal: vscode.Terminal): void {
+    this.terminalChangeVersion += 1;
+
     const terminalMetadata = this.metadataByTerminal.get(terminal);
 
     if (!terminalMetadata) return;
+
+    const requestedClose = this.closingTerminals.has(terminal);
 
     this.metadataByTerminal.delete(terminal);
     this.closingTerminals.delete(terminal);
     this.terminalBySessionId.delete(terminalMetadata.sessionId);
     this.removeSessionActivity(terminalMetadata.sessionId);
 
-    if (terminal.exitStatus?.reason !== vscode.TerminalExitReason.Shutdown) {
-      void this.clearSession(terminalMetadata).catch(reportActivityError);
-    }
+    void this.finishClosedSession(terminal, terminalMetadata, requestedClose).catch(reportActivityError);
 
     this.emitTerminalHostEvent({
       type: "closed",
@@ -491,22 +741,36 @@ export class VscodeTerminalHost implements TerminalHost {
     });
   }
 
+  private async finishClosedSession(
+    terminal: vscode.Terminal,
+    terminalMetadata: TerminalMetadata,
+    requestedClose = false,
+  ): Promise<void> {
+    if (requestedClose || terminal.exitStatus?.reason === vscode.TerminalExitReason.Process ||
+      terminal.exitStatus?.reason === vscode.TerminalExitReason.Extension) {
+      await this.clearSession(terminalMetadata);
+
+      return;
+    }
+
+    // User can mean a native transfer. Shutdown can mean reconnect or process revival.
+    await this.releaseSessionOwnership(terminalMetadata, true);
+  }
+
   private async clearSession(terminalMetadata: TerminalMetadata): Promise<void> {
     this.closedSessionIds.add(terminalMetadata.sessionId);
 
-    const cleanupResults = await Promise.allSettled([
-      clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId),
-      terminalMetadata.recoveryToken
-        ? this.terminalRecovery.removeRecord(terminalMetadata.recoveryToken)
-        : Promise.resolve(),
-    ]);
-    const cleanupErrors = cleanupResults.flatMap((cleanupResult) =>
-      cleanupResult.status === "rejected" ? [cleanupResult.reason] : [],
-    );
+    if (!terminalMetadata.recoveryToken) {
+      await clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId);
 
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(cleanupErrors, "Could not finish terminal session cleanup.");
+      return;
     }
+
+    await this.terminalRecovery.removeRecord(terminalMetadata.recoveryToken, {
+      ownerId: this.terminalRecovery.ownerId, ownerBindingId: this.ownerBindingId,
+    }, async () => {
+      await clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId);
+    });
   }
 
   private handleStartedTerminalShellExecution(
@@ -674,15 +938,45 @@ export class VscodeTerminalHost implements TerminalHost {
   }
 }
 
+function buildTerminalIdentityCounts(terminalCandidates: TerminalCandidate[]): TerminalIdentityCounts {
+  const identityCounts: TerminalIdentityCounts = {
+    nodes: new Map(), sessions: new Map(), tokens: new Map(),
+  };
+
+  for (const terminalCandidate of terminalCandidates) {
+    if (terminalCandidate.token) {
+      identityCounts.tokens.set(terminalCandidate.token,
+        (identityCounts.tokens.get(terminalCandidate.token) ?? 0) + 1,
+      );
+    }
+
+    if (!terminalCandidate.metadata) continue;
+
+    const { nodeId, sessionId } = terminalCandidate.metadata;
+
+    identityCounts.nodes.set(nodeId, (identityCounts.nodes.get(nodeId) ?? 0) + 1);
+    identityCounts.sessions.set(sessionId, (identityCounts.sessions.get(sessionId) ?? 0) + 1);
+  }
+
+  return identityCounts;
+}
+
+function getHasDuplicateIdentity(terminalMetadata: TerminalMetadata, identityCounts: TerminalIdentityCounts): boolean {
+  return (identityCounts.nodes.get(terminalMetadata.nodeId) ?? 0) > 1 ||
+    (identityCounts.sessions.get(terminalMetadata.sessionId) ?? 0) > 1 ||
+    (terminalMetadata.recoveryToken !== undefined &&
+      (identityCounts.tokens.get(terminalMetadata.recoveryToken) ?? 0) > 1);
+}
+
 function buildTerminalOptions(
   terminalLaunchRequest: TerminalLaunchRequest,
-  recoveryRecord: TerminalRecoveryRecord,
+  terminalRecoveryRecord: TerminalRecoveryRecord,
   configFilePath: string,
   configSource: "global" | "workspace",
   sessionUri?: string,
 ): vscode.TerminalOptions {
   const terminalOptions: vscode.TerminalOptions = {
-    name: buildTerminalTitle(terminalLaunchRequest.name, recoveryRecord.token),
+    name: buildTerminalTitle(terminalLaunchRequest.name, terminalRecoveryRecord.token),
     cwd: terminalLaunchRequest.cwd,
     env: {
       ...terminalLaunchRequest.env,
@@ -691,10 +985,10 @@ function buildTerminalOptions(
         configSource,
         nodeId: terminalLaunchRequest.nodeId,
         metadata: terminalLaunchRequest.metadata,
-        sessionId: recoveryRecord.sessionId,
+        sessionId: terminalRecoveryRecord.sessionId,
         sessionUri,
       }),
-      [workspaceIdEnvironmentName]: recoveryRecord.workspaceId,
+      [workspaceIdEnvironmentName]: terminalRecoveryRecord.workspaceId,
     },
     iconPath: new vscode.ThemeIcon("terminal"),
     isTransient: false,

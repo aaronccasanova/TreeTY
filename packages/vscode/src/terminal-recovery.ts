@@ -2,6 +2,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { mutateDocumentFile } from "@treety/core";
+
 export interface TerminalRecoveryScope {
   configFilePath: string;
   workspaceId: string;
@@ -13,6 +15,27 @@ export interface TerminalRecoveryRecord extends TerminalRecoveryScope {
   token: string;
   sessionId: string;
   nodeId: string;
+  ownerId?: string;
+  ownerBindingId?: string;
+  ownerProcessId?: number;
+  terminalProcessId?: number;
+  retired?: boolean;
+}
+
+export interface TerminalRecoveryNodeScope {
+  configFilePath: string;
+  nodeId: string;
+}
+
+export type TerminalRecoveryRecordLiveness = "owned" | "other-window" | "running" | "unknown";
+
+export type TerminalRecoveryRecordUpdate = Pick<
+  TerminalRecoveryRecord, "ownerId" | "ownerBindingId" | "ownerProcessId" | "terminalProcessId" | "retired"
+>;
+
+interface TerminalRecoveryRegistryOptions {
+  getProcessIsAlive?: (processId: number) => boolean;
+  unavailableReason?: string;
 }
 
 export interface TerminalRecoveryStorage {
@@ -20,18 +43,24 @@ export interface TerminalRecoveryStorage {
   update(key: string, value: unknown): PromiseLike<void>;
   keys(): readonly string[];
   refresh?(): Promise<void>;
+  refreshRecord?(key: string): Promise<void>;
+  replaceRecord?(key: string, terminalRecoveryRecord: TerminalRecoveryRecord): Promise<boolean>;
+  runWithNodeLock?<Result>(nodeLockId: string, operation: () => Promise<Result>): Promise<Result>;
 }
 
-type TerminalRecoveryTarget = Omit<TerminalRecoveryRecord, "version" | "token" | "hostId">;
+type TerminalRecoveryTarget = Pick<
+  TerminalRecoveryRecord, "configFilePath" | "workspaceId" | "sessionId" | "nodeId" | "ownerBindingId"
+>;
 type TerminalRecoveryTreeScope = Omit<TerminalRecoveryScope, "hostId">;
 
 const terminalRecoveryKeyPrefix = "treety.terminalRecovery.v1.";
 // A negative lookahead requires the true end, unlike "$" before a final newline.
 const terminalRecoveryTokenPattern = /^[A-Za-z0-9_-]{22}(?![\s\S])/;
 const terminalRecoveryTitlePattern = / \[treety:([A-Za-z0-9_-]{22})\](?![\s\S])/;
+const nodeOperationsByStorage = new WeakMap<TerminalRecoveryStorage, Map<string, Promise<void>>>();
 
 export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
-  private values = new Map<string, unknown>();
+  private storedRecordsByKey = new Map<string, unknown>();
 
   private storageOperation: Promise<void> = Promise.resolve();
 
@@ -42,11 +71,11 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
   }
 
   public get<T>(key: string): T | undefined {
-    return this.values.get(key) as T | undefined;
+    return this.storedRecordsByKey.get(key) as T | undefined;
   }
 
   public keys(): readonly string[] {
-    return [...this.values.keys()];
+    return [...this.storedRecordsByKey.keys()];
   }
 
   public async refresh(): Promise<void> {
@@ -58,12 +87,12 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 
-        this.values = new Map();
+        this.storedRecordsByKey = new Map();
 
         return;
       }
 
-      const values = new Map<string, unknown>();
+      const storedRecordsByKey = new Map<string, unknown>();
 
       await Promise.all(recoveryEntries.map(async (recoveryEntry) => {
         if (!recoveryEntry.name.endsWith(".json")) return;
@@ -76,7 +105,7 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
 
         // Preserve occupied names without following symlinks or reading directories.
         if (!recoveryEntry.isFile()) {
-          values.set(key, undefined);
+          storedRecordsByKey.set(key, undefined);
 
           return;
         }
@@ -94,14 +123,14 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
         }
 
         try {
-          values.set(key, JSON.parse(recoveryFileContent));
+          storedRecordsByKey.set(key, JSON.parse(recoveryFileContent));
         } catch {
           // Invalid JSON still occupies its token and must never be overwritten.
-          values.set(key, undefined);
+          storedRecordsByKey.set(key, undefined);
         }
       }));
 
-      this.values = values;
+      this.storedRecordsByKey = storedRecordsByKey;
     });
   }
 
@@ -124,7 +153,7 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
 
-        this.values.delete(key);
+        this.storedRecordsByKey.delete(key);
 
         return;
       }
@@ -133,8 +162,112 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
       await fs.writeFile(recoveryFilePath, JSON.stringify(value), {
         encoding: "utf8", flag: "wx", mode: 0o600,
       });
-      this.values.set(key, value);
+      this.storedRecordsByKey.set(key, value);
     });
+  }
+
+  public async refreshRecord(key: string): Promise<void> {
+    const recoveryFilePath = this.getRecoveryFilePath(key);
+
+    await this.runStorageOperation(async () => {
+      try {
+        const recoveryFileStat = await fs.lstat(recoveryFilePath);
+
+        if (!recoveryFileStat.isFile()) {
+          this.storedRecordsByKey.set(key, undefined);
+
+          return;
+        }
+
+        const recoveryFileContent = await fs.readFile(recoveryFilePath, "utf8");
+
+        try {
+          this.storedRecordsByKey.set(key, JSON.parse(recoveryFileContent));
+        } catch {
+          this.storedRecordsByKey.set(key, undefined);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+        this.storedRecordsByKey.delete(key);
+      }
+    });
+  }
+
+  public async replaceRecord(
+    key: string,
+    terminalRecoveryRecord: TerminalRecoveryRecord,
+  ): Promise<boolean> {
+    const recoveryFilePath = this.getRecoveryFilePath(key);
+    let didReplaceRecord = false;
+
+    await this.runStorageOperation(async () => {
+      try {
+        const recoveryFileStat = await fs.lstat(recoveryFilePath);
+
+        if (!recoveryFileStat.isFile()) return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+        this.storedRecordsByKey.delete(key);
+
+        return;
+      }
+
+      const temporaryFilePath = `${recoveryFilePath}.${crypto.randomUUID()}.tmp`;
+
+      try {
+        await fs.writeFile(temporaryFilePath, JSON.stringify(terminalRecoveryRecord), {
+          encoding: "utf8", flag: "wx", mode: 0o600,
+        });
+        await fs.rename(temporaryFilePath, recoveryFilePath);
+      } finally {
+        await fs.unlink(temporaryFilePath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      }
+
+      this.storedRecordsByKey.set(key, terminalRecoveryRecord);
+      didReplaceRecord = true;
+    });
+
+    return didReplaceRecord;
+  }
+
+  public async runWithNodeLock<Result>(
+    nodeLockId: string,
+    operation: () => Promise<Result>,
+  ): Promise<Result> {
+    const nodeLockFileName = crypto.createHash("sha256").update(nodeLockId).digest("hex");
+    const nodeLockFilePath = path.join(this.recoveryDirPath, "node-locks", `${nodeLockFileName}.json`);
+    let operationResult: Result;
+
+    await mutateDocumentFile(
+      nodeLockFilePath,
+      JSON.parse,
+      JSON.stringify,
+      async (lockDocument) => {
+        operationResult = await operation();
+
+        return lockDocument;
+      },
+      undefined,
+      { createDocument: () => ({ version: 1 }), preserveLiveLocks: true },
+    );
+
+    return operationResult!;
+  }
+
+  private getRecoveryFilePath(key: string): string {
+    const token = key.startsWith(terminalRecoveryKeyPrefix)
+      ? key.slice(terminalRecoveryKeyPrefix.length)
+      : "";
+
+    if (!terminalRecoveryTokenPattern.test(token)) {
+      throw new Error("The terminal recovery storage key is invalid.");
+    }
+
+    return path.join(this.recoveryDirPath, `${token}.json`);
   }
 
   private runStorageOperation(operation: () => Promise<void>): Promise<void> {
@@ -148,22 +281,111 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
 }
 
 export class TerminalRecoveryRegistry {
+  public readonly ownerId = crypto.randomUUID();
+
+  public readonly ownerProcessId = process.pid;
+
+  public readonly unavailableReason: string | undefined;
+
+  public readonly isAvailable: boolean;
+
+  private registryRefresh: Promise<void> | undefined;
+
+  private lastRefreshAt = Number.NEGATIVE_INFINITY;
+
   public constructor(
     private readonly storage: TerminalRecoveryStorage,
     private readonly hostId: string,
+    private readonly options: TerminalRecoveryRegistryOptions = {},
   ) {
     if (!getIsRecoveryField(hostId)) {
       throw new Error("Terminal recovery requires a host identity.");
     }
+
+    this.unavailableReason = options.unavailableReason;
+    this.isAvailable = options.unavailableReason === undefined;
   }
 
-  public async refresh(): Promise<void> {
-    await this.storage.refresh?.();
+  public static createUnavailable(hostId: string, message: string): TerminalRecoveryRegistry {
+    return new TerminalRecoveryRegistry({
+      get: () => undefined,
+      keys: () => [],
+      update: async () => { throw new Error(message); },
+    }, hostId, { unavailableReason: message });
+  }
+
+  public async refresh(force = false): Promise<void> {
+    if (this.registryRefresh) {
+      await this.registryRefresh;
+
+      if (!force) return;
+    }
+
+    if (!force && Date.now() - this.lastRefreshAt < 1_000) return;
+
+    const registryRefresh = (async () => {
+      await this.storage.refresh?.();
+      this.lastRefreshAt = Date.now();
+    })();
+
+    this.registryRefresh = registryRefresh;
+
+    try {
+      await registryRefresh;
+    } finally {
+      if (this.registryRefresh === registryRefresh) this.registryRefresh = undefined;
+    }
+  }
+
+  public async refreshRecord(token: string): Promise<void> {
+    if (!terminalRecoveryTokenPattern.test(token)) return;
+
+    if (this.storage.refreshRecord) {
+      await this.storage.refreshRecord(`${terminalRecoveryKeyPrefix}${token}`);
+
+      return;
+    }
+
+    await this.refresh(true);
+  }
+
+  public async runWithNodeLock<Result>(
+    terminalRecoveryNodeScope: TerminalRecoveryNodeScope,
+    operation: () => Promise<Result>,
+  ): Promise<Result> {
+    this.assertAvailable();
+
+    const nodeLockId = JSON.stringify([this.hostId, terminalRecoveryNodeScope.configFilePath, terminalRecoveryNodeScope.nodeId]);
+
+    if (this.storage.runWithNodeLock) {
+      return await this.storage.runWithNodeLock(nodeLockId, operation);
+    }
+
+    let nodeOperations = nodeOperationsByStorage.get(this.storage);
+
+    if (!nodeOperations) {
+      nodeOperations = new Map();
+      nodeOperationsByStorage.set(this.storage, nodeOperations);
+    }
+
+    const previousNodeOperation = nodeOperations.get(nodeLockId) ?? Promise.resolve();
+    const nodeOperation = previousNodeOperation.then(operation);
+    const nodeOperationCompletion = nodeOperation.then(() => {}, () => {});
+
+    nodeOperations.set(nodeLockId, nodeOperationCompletion);
+
+    try {
+      return await nodeOperation;
+    } finally {
+      if (nodeOperations.get(nodeLockId) === nodeOperationCompletion) nodeOperations.delete(nodeLockId);
+    }
   }
 
   public async createRecord(
     terminalRecoveryTarget: TerminalRecoveryTarget,
   ): Promise<TerminalRecoveryRecord> {
+    this.assertAvailable();
+
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const token = crypto.randomBytes(16).toString("base64url");
       const terminalRecoveryRecord: TerminalRecoveryRecord = {
@@ -171,6 +393,8 @@ export class TerminalRecoveryRegistry {
         version: 1,
         token,
         hostId: this.hostId,
+        ownerId: this.ownerId,
+        ownerProcessId: this.ownerProcessId,
       };
 
       if (!getIsRecoveryRecord(terminalRecoveryRecord)) {
@@ -244,10 +468,134 @@ export class TerminalRecoveryRegistry {
     return terminalRecoveryRecords;
   }
 
-  public async removeRecord(token: string): Promise<void> {
-    if (!this.getRecord(token)) return;
+  public getRecordsForNode(
+    terminalRecoveryNodeScope: TerminalRecoveryNodeScope,
+  ): TerminalRecoveryRecord[] {
+    const terminalRecoveryRecords: TerminalRecoveryRecord[] = [];
 
-    await this.storage.update(`${terminalRecoveryKeyPrefix}${token}`, undefined);
+    for (const recoveryKey of this.storage.keys()) {
+      if (!recoveryKey.startsWith(terminalRecoveryKeyPrefix)) continue;
+
+      const terminalRecoveryRecord = this.getRecord(recoveryKey.slice(terminalRecoveryKeyPrefix.length));
+
+      if (terminalRecoveryRecord?.configFilePath === terminalRecoveryNodeScope.configFilePath &&
+        terminalRecoveryRecord.nodeId === terminalRecoveryNodeScope.nodeId) {
+        terminalRecoveryRecords.push(terminalRecoveryRecord);
+      }
+    }
+
+    return terminalRecoveryRecords;
+  }
+
+  public getRecordLiveness(terminalRecoveryRecord: TerminalRecoveryRecord): TerminalRecoveryRecordLiveness {
+    if (terminalRecoveryRecord.ownerId === this.ownerId) return "owned";
+
+    const getProcessIsAlive = this.options.getProcessIsAlive ?? getProcessIsAliveOnHost;
+
+    if (terminalRecoveryRecord.ownerProcessId && getProcessIsAlive(terminalRecoveryRecord.ownerProcessId)) {
+      return "other-window";
+    }
+
+    if (terminalRecoveryRecord.terminalProcessId && getProcessIsAlive(terminalRecoveryRecord.terminalProcessId)) {
+      return "running";
+    }
+
+    return "unknown";
+  }
+
+  public async updateRecord(
+    token: string,
+    terminalRecoveryRecordUpdate: TerminalRecoveryRecordUpdate,
+  ): Promise<TerminalRecoveryRecord | undefined> {
+    this.assertAvailable();
+    await this.refreshRecord(token);
+
+    const terminalRecoveryRecord = this.getRecord(token);
+
+    if (!terminalRecoveryRecord) return undefined;
+
+    const updatedTerminalRecoveryRecord = { ...terminalRecoveryRecord };
+
+    for (const field of ["ownerId", "ownerBindingId", "ownerProcessId", "terminalProcessId", "retired"] as const) {
+      if (!Object.hasOwn(terminalRecoveryRecordUpdate, field)) continue;
+
+      if (terminalRecoveryRecordUpdate[field] === undefined) {
+        delete updatedTerminalRecoveryRecord[field];
+
+        continue;
+      }
+
+      Object.assign(updatedTerminalRecoveryRecord, { [field]: terminalRecoveryRecordUpdate[field] });
+    }
+
+    if (!getIsRecoveryRecord(updatedTerminalRecoveryRecord)) {
+      throw new Error("The terminal recovery record update is invalid.");
+    }
+
+    const recoveryKey = `${terminalRecoveryKeyPrefix}${token}`;
+
+    if (this.storage.replaceRecord) {
+      return await this.storage.replaceRecord(recoveryKey, updatedTerminalRecoveryRecord)
+        ? updatedTerminalRecoveryRecord
+        : undefined;
+    }
+
+    await this.storage.update(recoveryKey, updatedTerminalRecoveryRecord);
+
+    return updatedTerminalRecoveryRecord;
+  }
+
+  public async removeRecord(
+    token: string,
+    expectedOwner?: { ownerId: string; ownerBindingId: string },
+    beforeRemove?: () => Promise<void>,
+  ): Promise<void> {
+    await this.refreshRecord(token);
+
+    const terminalRecoveryRecord = this.getRecord(token);
+
+    if (!terminalRecoveryRecord) {
+      await beforeRemove?.();
+
+      return;
+    }
+
+    await this.runWithNodeLock(terminalRecoveryRecord, async () => {
+      await this.refreshRecord(token);
+
+      const currentTerminalRecoveryRecord = this.getRecord(token);
+
+      if (!currentTerminalRecoveryRecord) {
+        await beforeRemove?.();
+
+        return;
+      }
+
+      if (currentTerminalRecoveryRecord.configFilePath !== terminalRecoveryRecord.configFilePath ||
+        currentTerminalRecoveryRecord.nodeId !== terminalRecoveryRecord.nodeId ||
+        currentTerminalRecoveryRecord.sessionId !== terminalRecoveryRecord.sessionId) return;
+
+      if (expectedOwner && (
+        currentTerminalRecoveryRecord.ownerId !== expectedOwner.ownerId ||
+        currentTerminalRecoveryRecord.ownerBindingId !== expectedOwner.ownerBindingId
+      )) return;
+
+      const cleanupResults = await Promise.allSettled([
+        Promise.resolve().then(() => beforeRemove?.()),
+        this.storage.update(`${terminalRecoveryKeyPrefix}${token}`, undefined),
+      ]);
+      const cleanupErrors = cleanupResults.flatMap((cleanupResult) =>
+        cleanupResult.status === "rejected" ? [cleanupResult.reason] : [],
+      );
+
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, "Could not finish terminal recovery cleanup.");
+      }
+    });
+  }
+
+  private assertAvailable(): void {
+    if (this.unavailableReason) throw new Error(this.unavailableReason);
   }
 }
 
@@ -275,9 +623,28 @@ function getIsRecoveryRecord(value: unknown): value is TerminalRecoveryRecord {
     getIsRecoveryField(terminalRecoveryRecord.workspaceId) &&
     getIsRecoveryField(terminalRecoveryRecord.hostId) &&
     getIsRecoveryField(terminalRecoveryRecord.sessionId) &&
-    getIsRecoveryField(terminalRecoveryRecord.nodeId);
+    getIsRecoveryField(terminalRecoveryRecord.nodeId) &&
+    (terminalRecoveryRecord.ownerId === undefined || getIsRecoveryField(terminalRecoveryRecord.ownerId)) &&
+    (terminalRecoveryRecord.ownerBindingId === undefined || getIsRecoveryField(terminalRecoveryRecord.ownerBindingId)) &&
+    (terminalRecoveryRecord.ownerProcessId === undefined || getIsProcessId(terminalRecoveryRecord.ownerProcessId)) &&
+    (terminalRecoveryRecord.terminalProcessId === undefined || getIsProcessId(terminalRecoveryRecord.terminalProcessId)) &&
+    (terminalRecoveryRecord.retired === undefined || typeof terminalRecoveryRecord.retired === "boolean");
 }
 
 function getIsRecoveryField(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+function getIsProcessId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function getProcessIsAliveOnHost(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
 }

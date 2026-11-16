@@ -56,10 +56,19 @@ nodeTest.test("does not recover a terminal that closes while its registration wa
   testContext.after(() => fixture.host.dispose());
   const registration = createDeferred();
   const registrationStarted = createDeferred();
-  fixture.core.registerTreeNodeSession = () => {
+  const persistedSessionIds = new Set();
+  fixture.core.registerTreeNodeSession = async (_config, _nodeId, sessionId) => {
     registrationStarted.resolve();
+    await registration.promise;
+    persistedSessionIds.add(sessionId);
 
-    return registration.promise;
+    return { version: 1, nodes: {} };
+  };
+  fixture.core.clearTreeNodeSession = async (_config, _nodeId, sessionId) => {
+    fixture.clearedSessions.push(sessionId);
+    persistedSessionIds.delete(sessionId);
+
+    return { version: 1, nodes: {} };
   };
 
   const sessionsPromise = fixture.host.getSessions();
@@ -69,6 +78,7 @@ nodeTest.test("does not recover a terminal that closes while its registration wa
 
   assert.deepEqual(await sessionsPromise, [{ id: "session-second", nodeId: "second" }]);
   assert.ok(fixture.clearedSessions.includes("session-first"));
+  assert.deepEqual([...persistedSessionIds], ["session-second"]);
 });
 
 nodeTest.test("does not recover an earlier terminal closed while a later registration waits", async (testContext) => {
@@ -181,6 +191,7 @@ nodeTest.test("environment recovery after a native rename keeps the exact record
   const otherSessionRecord = await fixture.registry.createRecord({
     configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "another-session", nodeId: "first",
   });
+  await fixture.registry.updateRecord(otherSessionRecord.token, { ownerId: undefined, ownerProcessId: undefined });
   const terminal = fixture.createdTerminals[0];
   terminal.name = "User renamed the terminal";
   fixture.host.dispose();
@@ -342,6 +353,7 @@ nodeTest.test("the production engine recovers onOpen terminals, reveals the orig
   assert.deepEqual(restoredTerminal.showOptions, [false]);
 
   await treeTYEngine.reconcile({ ...fixture.resolvedTreeConfig, tree: [fixture.resolvedTreeConfig.tree[1]] });
+  await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(restoredTerminal.wasDisposed, true);
   assert.ok(fixture.clearedSessions.includes("session-first"));
@@ -377,7 +389,7 @@ nodeTest.test("absence from the current window preserves recorded sessions witho
   assert.ok(fixture.registry.getRecord(recoveryRecord.token));
 });
 
-nodeTest.test("window shutdown preserves a bound terminal's record and persistent session", async (testContext) => {
+nodeTest.test("window shutdown clears active session state while preserving its recovery identity", async (testContext) => {
   const fixture = createFixture();
   testContext.after(() => fixture.host.dispose());
   const terminal = fixture.terminals[0];
@@ -388,7 +400,7 @@ nodeTest.test("window shutdown preserves a bound terminal's record and persisten
   await new Promise(resolve => setImmediate(resolve));
 
   assert.ok(fixture.registry.getRecord(recoveryRecord.token));
-  assert.deepEqual(fixture.clearedSessions, []);
+  assert.deepEqual(fixture.clearedSessions, ["session-first"]);
   await assert.rejects(
     fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
     /previous terminal session could not be recovered/,
@@ -404,12 +416,13 @@ nodeTest.test("normal close removes only its bound record and preserves records 
   const absentRecord = await fixture.registry.createRecord({
     configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "other-session", nodeId: "first",
   });
+  await fixture.registry.updateRecord(absentRecord.token, { ownerId: undefined, ownerProcessId: undefined });
   const otherScopeRecord = await fixture.registry.createRecord({
     configFilePath: "/tmp/other-tree.json", workspaceId: "other-workspace", sessionId: "session-first", nodeId: "first",
   });
   await fixture.host.getSessions();
 
-  fixture.close(terminal, fixture.vscode.TerminalExitReason.User);
+  fixture.close(terminal, fixture.vscode.TerminalExitReason.Process);
   await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(fixture.registry.getRecord(recoveryRecord.token), undefined);
@@ -436,23 +449,33 @@ nodeTest.test("recovery retries session registration after a storage failure", a
   assert.equal(registrationAttempts, 2);
 });
 
-nodeTest.test("explicit replacement leaves an unresolved original terminal and its record intact", async (testContext) => {
-  const fixture = createFixture();
+nodeTest.test("forgetting an unknown session retires its identity and does not block again after replacement closes", async (testContext) => {
+  const fixture = createFixture({ terminals: [] });
   testContext.after(() => fixture.host.dispose());
-  const restoredTerminal = fixture.terminals[0];
-  const recoveryRecord = await markRestoredTerminal(fixture, restoredTerminal, "first");
-  restoredTerminal.name = "User renamed the terminal";
+  const recoveryRecord = await fixture.registry.createRecord({
+    configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "previous-session", nodeId: "first",
+  });
+  await fixture.registry.updateRecord(recoveryRecord.token, { ownerId: undefined, ownerProcessId: undefined });
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+
+  await assert.rejects(fixture.host.createSession(terminalLaunchRequest), error => error.canForget === true);
 
   fixture.host.allowNextSessionCreation("first");
-  const hostedTerminalSession = await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+  const hostedTerminalSession = await fixture.host.createSession(terminalLaunchRequest);
 
   assert.equal(fixture.createdTerminals.length, 1);
-  assert.notEqual(hostedTerminalSession.id, "session-first");
-  assert.ok(fixture.registry.getRecord(recoveryRecord.token));
-  assert.equal(restoredTerminal.wasDisposed, false);
+  assert.notEqual(hostedTerminalSession.id, "previous-session");
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, true);
+  assert.ok(fixture.clearedSessions.includes("previous-session"));
+
+  fixture.close(fixture.createdTerminals[0]);
+  await new Promise(resolve => setImmediate(resolve));
+  await fixture.host.createSession(terminalLaunchRequest);
+
+  assert.equal(fixture.createdTerminals.length, 2);
 });
 
-nodeTest.test("late title restoration reconnects the production engine without another launch", { timeout: 2_000 }, async (testContext) => {
+nodeTest.test("explicit discovery reconnects a late restored title without another launch", { timeout: 2_000 }, async (testContext) => {
   const fixture = createFixture();
   const restoredTerminal = fixture.terminals[0];
   await markRestoredTerminal(fixture, restoredTerminal, "first");
@@ -471,6 +494,7 @@ nodeTest.test("late title restoration reconnects the production engine without a
   await treeTYEngine.start();
   assert.equal(fixture.createdTerminals.length, 0);
   restoredTerminal.name = restoredTitle;
+  await fixture.host.getSessions();
   await recoveredSession.promise;
   await treeTYEngine.openTerminal("first");
 
@@ -495,6 +519,7 @@ nodeTest.test("a late native open event recovers the matching terminal for an ex
   });
 
   await treeTYEngine.start();
+  const getSessions = testContext.mock.method(fixture.host, "getSessions");
   const restoredTerminal = createTerminal({ name: `TreeTY: first [treety:${recoveryRecord.token}]`, env: {} });
   fixture.terminals.push(restoredTerminal);
   fixture.events.open(restoredTerminal);
@@ -502,6 +527,7 @@ nodeTest.test("a late native open event recovers the matching terminal for an ex
 
   assert.equal(treeTYEngine.getTerminalSessionState("first").hostSessionId, "session-first");
   assert.equal(fixture.createdTerminals.length, 0);
+  assert.equal(getSessions.mock.callCount(), 1);
 });
 
 for (const interruption of ["cancellation", "host disposal"]) {
@@ -547,7 +573,7 @@ for (const interruption of ["cancellation", "host disposal"]) {
   });
 }
 
-nodeTest.test("restart replaces a confirmed closed terminal while persistent cleanup is still pending", { timeout: 2_000 }, async (testContext) => {
+nodeTest.test("restart waits for serialized cleanup before replacing a confirmed closed terminal", { timeout: 2_000 }, async (testContext) => {
   const fixture = createFixture();
   const terminal = fixture.terminals[0];
   const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
@@ -570,17 +596,19 @@ nodeTest.test("restart replaces a confirmed closed terminal while persistent cle
   };
 
   await treeTYEngine.start();
-  await treeTYEngine.restartTerminal("first");
+  const restart = treeTYEngine.restartTerminal("first");
+  await new Promise(resolve => setImmediate(resolve));
 
   assert.equal(terminal.wasDisposed, true);
   assert.ok(fixture.clearedSessions.includes("session-first"));
   assert.ok(fixture.registry.getRecord(recoveryRecord.token));
-  assert.equal(fixture.createdTerminals.length, 1);
-  assert.notEqual(treeTYEngine.getTerminalSessionState("first").hostSessionId, "session-first");
+  assert.equal(fixture.createdTerminals.length, 0);
 
   sessionClear.resolve({ version: 1, nodes: {} });
-  await new Promise(resolve => setImmediate(resolve));
+  await restart;
 
+  assert.equal(fixture.createdTerminals.length, 1);
+  assert.notEqual(treeTYEngine.getTerminalSessionState("first").hostSessionId, "session-first");
   assert.equal(fixture.registry.getRecord(recoveryRecord.token), undefined);
   assert.equal(fixture.registry.getRecords({ configFilePath: "/tmp/tree.json", workspaceId: "workspace" }).length, 1);
 });
@@ -650,7 +678,7 @@ nodeTest.test("new unresolved identity during launch preparation prevents native
 
     registration.resolve({ version: 1, nodes: {} });
 
-    await assert.rejects(sessionCreation, /previous terminal session could not be recovered/, arrival);
+    await assert.rejects(sessionCreation, error => error.canForget === false, arrival);
     assert.equal(fixture.createdTerminals.length, 0, arrival);
     assert.equal(fixture.registry.getRecords({ configFilePath: "/tmp/tree.json", workspaceId: "workspace" }).length,
       arrival === "another recovery record" ? 1 : 0);
@@ -677,6 +705,329 @@ nodeTest.test("normal close removes the recovery record even when persistent ses
   assert.deepEqual(errorArguments[1].errors, [stateError]);
 });
 
+nodeTest.test("confirmation cannot create a third terminal when two native terminals claim the leaf", async (testContext) => {
+  const fixture = createFixture({ terminals: [createTerminal({ name: "TreeTY: first", env: {} })] });
+  testContext.after(() => fixture.host.dispose());
+  await markRestoredTerminal(fixture, fixture.terminals[0], "first");
+  fixture.terminals.push(createTerminal({ name: fixture.terminals[0].name, env: {} }));
+  fixture.host.allowNextSessionCreation("first");
+
+  await assert.rejects(
+    fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
+    error => error.canForget === false && /Multiple terminals/.test(error.message),
+  );
+
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.ok(fixture.terminals.every(terminal => !terminal.wasDisposed));
+});
+
+nodeTest.test("concurrent launches in independent windows create one terminal for the shared leaf", async (testContext) => {
+  const storage = createStorage();
+  const firstFixture = createFixture({ storage, terminals: [] });
+  const secondFixture = createFixture({ storage, terminals: [] });
+  testContext.after(() => firstFixture.host.dispose());
+  testContext.after(() => secondFixture.host.dispose());
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+
+  const sessionCreations = await Promise.allSettled([
+    firstFixture.host.createSession(terminalLaunchRequest),
+    secondFixture.host.createSession(terminalLaunchRequest),
+  ]);
+  const rejectedCreations = sessionCreations.filter(sessionCreation => sessionCreation.status === "rejected");
+
+  assert.equal(sessionCreations.filter(sessionCreation => sessionCreation.status === "fulfilled").length, 1);
+  assert.equal(rejectedCreations.length, 1);
+  assert.equal(rejectedCreations[0].reason.canForget, false);
+  assert.match(rejectedCreations[0].reason.message, /another VS Code window/);
+  assert.equal(firstFixture.createdTerminals.length + secondFixture.createdTerminals.length, 1);
+  assert.equal(firstFixture.registry.getRecordsForNode({ configFilePath: "/tmp/tree.json", nodeId: "first" }).length, 1);
+});
+
+nodeTest.test("confirmation cannot replace a foreign owner or a known running terminal process", async (testContext) => {
+  for (const ownership of ["foreign window", "running process"]) {
+    const storage = createStorage();
+    const ownerFixture = createFixture({ storage, terminals: [] });
+    testContext.after(() => ownerFixture.host.dispose());
+    const recoveryRecord = await ownerFixture.registry.createRecord({
+      configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "existing-session", nodeId: "first",
+    });
+
+    if (ownership === "running process") {
+      await ownerFixture.registry.updateRecord(recoveryRecord.token, {
+        ownerId: undefined, ownerProcessId: undefined, terminalProcessId: 123456,
+      });
+    }
+
+    const fixture = createFixture({ storage, terminals: [], registryOptions: { getProcessIsAlive: () => true } });
+    testContext.after(() => fixture.host.dispose());
+    fixture.host.allowNextSessionCreation("first");
+
+    await assert.rejects(
+      fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
+      error => error.canForget === false && (ownership === "foreign window"
+        ? /another VS Code window/.test(error.message) : /running or starting terminal/.test(error.message)),
+    );
+    assert.equal(fixture.createdTerminals.length, 0);
+    assert.notEqual(fixture.registry.getRecord(recoveryRecord.token).retired, true);
+  }
+});
+
+nodeTest.test("a retired token restored without another live owner is recovered instead of launching again", async (testContext) => {
+  const fixture = createFixture({ terminals: [createTerminal({ name: "TreeTY: first", env: {} })] });
+  testContext.after(() => fixture.host.dispose());
+  const recoveryRecord = await markRestoredTerminal(fixture, fixture.terminals[0], "first");
+  await fixture.registry.updateRecord(recoveryRecord.token, { retired: true });
+
+  const hostedTerminalSession = await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+
+  assert.equal(hostedTerminalSession.id, "session-first");
+  assert.equal(hostedTerminalSession.recovered, true);
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, false);
+});
+
+nodeTest.test("a retired token returning while another window owns the leaf cannot acquire it or start another terminal", async (testContext) => {
+  const storage = createStorage();
+  const ownerFixture = createFixture({ storage, terminals: [] });
+  testContext.after(() => ownerFixture.host.dispose());
+  await ownerFixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+  const fixture = createFixture({ storage, terminals: [createTerminal({ name: "TreeTY: first", env: {} })] });
+  testContext.after(() => fixture.host.dispose());
+  const recoveryRecord = await markRestoredTerminal(fixture, fixture.terminals[0], "first");
+  await fixture.registry.updateRecord(recoveryRecord.token, { retired: true });
+
+  assert.deepEqual(await fixture.host.getSessions(), []);
+  fixture.host.allowNextSessionCreation("first");
+  await assert.rejects(
+    fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
+    error => error.canForget === false,
+  );
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.equal(ownerFixture.createdTerminals.length, 1);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, true);
+});
+
+nodeTest.test("native user close preserves the identity until receiving-window state registration follows old state cleanup", { timeout: 2_000 }, async (testContext) => {
+  const storage = createStorage();
+  const fixture = createFixture({ storage });
+  testContext.after(() => fixture.host.dispose());
+  const terminal = fixture.terminals[0];
+  const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
+  await fixture.host.getSessions();
+  const sessionClear = createDeferred();
+  const sessionClearStarted = createDeferred();
+  testContext.after(() => sessionClear.resolve());
+  const stateOperations = [];
+  fixture.core.clearTreeNodeSession = async () => {
+    stateOperations.push("old clear started");
+    sessionClearStarted.resolve();
+    await sessionClear.promise;
+    stateOperations.push("old clear completed");
+
+    return { version: 1, nodes: {} };
+  };
+
+  fixture.close(terminal, fixture.vscode.TerminalExitReason.User);
+  await sessionClearStarted.promise;
+  const receivingFixture = createFixture({ storage, terminals: [createTerminal({ name: terminal.name, env: {} })] });
+  testContext.after(() => receivingFixture.host.dispose());
+  receivingFixture.core.registerTreeNodeSession = async () => {
+    stateOperations.push("new registration");
+
+    return { version: 1, nodes: {} };
+  };
+  const recoveredSessions = receivingFixture.host.getSessions();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(stateOperations, ["old clear started"]);
+  assert.ok(fixture.registry.getRecord(recoveryRecord.token));
+  sessionClear.resolve();
+
+  assert.deepEqual(await recoveredSessions, [{ id: "session-first", nodeId: "first" }]);
+  assert.deepEqual(stateOperations, ["old clear started", "old clear completed", "new registration"]);
+  assert.equal(receivingFixture.registry.getRecord(recoveryRecord.token).ownerId, receivingFixture.registry.ownerId);
+});
+
+nodeTest.test("a TreeTY-requested close removes identity even when VS Code reports a user close", async (testContext) => {
+  const fixture = createFixture();
+  testContext.after(() => fixture.host.dispose());
+  const terminal = fixture.terminals[0];
+  const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
+  await fixture.host.getSessions();
+  terminal.dispose = () => fixture.close(terminal, fixture.vscode.TerminalExitReason.User);
+
+  fixture.host.closeSession("session-first");
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token), undefined);
+});
+
+nodeTest.test("disposing an old host after Refresh cannot release the new host's binding in a shared registry", async (testContext) => {
+  const fixture = createFixture();
+  testContext.after(() => fixture.host.dispose());
+  const terminal = fixture.terminals[0];
+  const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
+  await fixture.host.getSessions();
+  const previousBindingId = fixture.registry.getRecord(recoveryRecord.token).ownerBindingId;
+  const refreshedFixture = createFixture({ storage: fixture.storage, registry: fixture.registry, terminals: [terminal] });
+  testContext.after(() => refreshedFixture.host.dispose());
+  await refreshedFixture.host.getSessions();
+  const refreshedBindingId = fixture.registry.getRecord(recoveryRecord.token).ownerBindingId;
+
+  fixture.host.dispose();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.notEqual(refreshedBindingId, previousBindingId);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerBindingId, refreshedBindingId);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerId, fixture.registry.ownerId);
+});
+
+nodeTest.test("a terminal closing while its ownership claim waits leaves no record or registered session", async (testContext) => {
+  const fixture = createFixture({ terminals: [createTerminal({ name: "TreeTY: first", env: {} })] });
+  testContext.after(() => fixture.host.dispose());
+  const terminal = fixture.terminals[0];
+  const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
+  const ownershipClaim = createDeferred();
+  const ownershipClaimStarted = createDeferred();
+  testContext.after(() => ownershipClaim.resolve());
+  const updateRecord = fixture.registry.updateRecord.bind(fixture.registry);
+  fixture.registry.updateRecord = async (token, recordUpdate) => {
+    if (recordUpdate.ownerBindingId) {
+      ownershipClaimStarted.resolve();
+      await ownershipClaim.promise;
+    }
+
+    return updateRecord(token, recordUpdate);
+  };
+
+  const hostedTerminalSessions = fixture.host.getSessions();
+  await ownershipClaimStarted.promise;
+  fixture.close(terminal);
+  ownershipClaim.resolve();
+
+  assert.deepEqual(await hostedTerminalSessions, []);
+  assert.deepEqual(fixture.registeredSessions, []);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token), undefined);
+});
+
+nodeTest.test("unavailable recovery storage still binds valid environment identity but blocks a new native launch", async (testContext) => {
+  const registry = recoveryModule.exports.TerminalRecoveryRegistry.createUnavailable("host", "Recovery storage unavailable");
+  const fixture = createFixture({ registry });
+  testContext.after(() => fixture.host.dispose());
+  fixture.vscode.window.terminals = [fixture.terminals[0]];
+  fixture.terminals[0].name = `TreeTY: first [treety:${"A".repeat(22)}]`;
+
+  assert.deepEqual(await fixture.host.getSessions(), [{ id: "session-first", nodeId: "first" }]);
+  await assert.rejects(
+    fixture.host.createSession({ nodeId: "second", name: "second", cwd: "/tmp", env: {} }),
+    /Recovery storage unavailable/,
+  );
+  assert.equal(fixture.createdTerminals.length, 0);
+});
+
+nodeTest.test("unknown unrelated terminal opens do not schedule discovery or repeated registry scans", async (testContext) => {
+  const scheduleTimeout = testContext.mock.method(globalThis, "setTimeout");
+  const fixture = createFixture({ terminals: [] });
+  testContext.after(() => fixture.host.dispose());
+  const getSessions = testContext.mock.method(fixture.host, "getSessions");
+  const refresh = testContext.mock.method(fixture.registry, "refresh");
+  const unrelatedTerminal = createTerminal({ name: "Shell", env: {} });
+  fixture.terminals.push(unrelatedTerminal);
+
+  fixture.events.open(unrelatedTerminal);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(scheduleTimeout.mock.callCount(), 0);
+  assert.equal(getSessions.mock.callCount(), 0);
+  assert.equal(refresh.mock.callCount(), 0);
+});
+
+nodeTest.test("failure after reservation lock completion removes the saved claim and allows the next launch", async (testContext) => {
+  const fixture = createFixture({ terminals: [] });
+  testContext.after(() => fixture.host.dispose());
+  const runWithNodeLock = fixture.registry.runWithNodeLock.bind(fixture.registry);
+  let failLockCompletion = true;
+  fixture.registry.runWithNodeLock = async (...arguments_) => {
+    const operationResult = await runWithNodeLock(...arguments_);
+
+    if (failLockCompletion) {
+      failLockCompletion = false;
+
+      throw new Error("Could not complete reservation lock");
+    }
+
+    return operationResult;
+  };
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+
+  await assert.rejects(fixture.host.createSession(terminalLaunchRequest), /Could not complete reservation lock/);
+
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.equal(fixture.clearedSessions.length, 1);
+  assert.deepEqual(fixture.registry.getRecordsForNode({ configFilePath: "/tmp/tree.json", nodeId: "first" }), []);
+
+  await fixture.host.createSession(terminalLaunchRequest);
+
+  assert.equal(fixture.createdTerminals.length, 1);
+});
+
+nodeTest.test("late registration after an ambiguous close clears old state without clearing a receiving owner's state", { timeout: 2_000 }, async (testContext) => {
+  for (const closeReason of ["User", "Shutdown"]) {
+    for (const transferred of [false, true]) {
+      const storage = createStorage();
+      const fixture = createFixture({ storage, terminals: [createTerminal({ name: "TreeTY: first", env: {} })] });
+      testContext.after(() => fixture.host.dispose());
+      const terminal = fixture.terminals[0];
+      const recoveryRecord = await markRestoredTerminal(fixture, terminal, "first");
+      const registration = createDeferred();
+      const registrationStarted = createDeferred();
+      testContext.after(() => registration.resolve());
+      const persistedSessionIds = new Set();
+      fixture.core.registerTreeNodeSession = async (_config, _nodeId, sessionId) => {
+        registrationStarted.resolve();
+        await registration.promise;
+        persistedSessionIds.add(sessionId);
+
+        return { version: 1, nodes: {} };
+      };
+      fixture.core.clearTreeNodeSession = async (_config, _nodeId, sessionId) => {
+        fixture.clearedSessions.push(sessionId);
+        persistedSessionIds.delete(sessionId);
+
+        return { version: 1, nodes: {} };
+      };
+
+      const hostedTerminalSessions = fixture.host.getSessions();
+      await registrationStarted.promise;
+      fixture.close(terminal, fixture.vscode.TerminalExitReason[closeReason]);
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(fixture.clearedSessions.length, 1);
+      assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerId, undefined);
+      let receivingFixture;
+
+      if (transferred) {
+        receivingFixture = createFixture({ storage, terminals: [createTerminal({ name: terminal.name, env: {} })] });
+        testContext.after(() => receivingFixture.host.dispose());
+        receivingFixture.core.registerTreeNodeSession = async (_config, _nodeId, sessionId) => {
+          persistedSessionIds.add(sessionId);
+
+          return { version: 1, nodes: {} };
+        };
+
+        assert.deepEqual(await receivingFixture.host.getSessions(), [{ id: "session-first", nodeId: "first" }]);
+      }
+
+      registration.resolve();
+
+      assert.deepEqual(await hostedTerminalSessions, []);
+      assert.deepEqual([...persistedSessionIds], transferred ? ["session-first"] : []);
+      assert.equal(fixture.clearedSessions.length, transferred ? 1 : 2);
+      assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerId, receivingFixture?.registry.ownerId);
+    }
+  }
+});
+
 function createFixture(options = {}) {
   const events = {};
   const registeredSessions = [];
@@ -684,7 +1035,7 @@ function createFixture(options = {}) {
   const activityClears = [];
   const createdTerminals = [];
   const storage = options.storage ?? createStorage();
-  const registry = new recoveryModule.exports.TerminalRecoveryRegistry(storage, "host");
+  const registry = options.registry ?? new recoveryModule.exports.TerminalRecoveryRegistry(storage, "host", options.registryOptions);
   const terminals = options.terminals ?? ["first", "second"].map(nodeId => createTerminal({
     name: `TreeTY: ${nodeId}`,
     env: {
@@ -816,6 +1167,7 @@ async function markRestoredTerminal(fixture, terminal, nodeId) {
   const recoveryRecord = await fixture.registry.createRecord({
     configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: `session-${nodeId}`, nodeId,
   });
+  await fixture.registry.updateRecord(recoveryRecord.token, { ownerId: undefined, ownerProcessId: undefined });
   terminal.name = `TreeTY: ${nodeId} [treety:${recoveryRecord.token}]`;
   terminal.creationOptions = { env: {} };
 

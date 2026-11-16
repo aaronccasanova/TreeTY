@@ -574,24 +574,24 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     try {
       await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(nodeTreeEntry.treeNode.id);
     } catch (error) {
-      if (!(error instanceof TerminalRecoveryError)) throw error;
-      if (!(await this.confirmNewTerminal(nodeTreeEntry))) return;
+      if (!(error instanceof TerminalRecoveryError) || !error.canForget) throw error;
+      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return;
     }
 
     await this.syncExplorerDirectory(nodeTreeEntry, false);
   }
 
-  private async confirmNewTerminal(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
-    const choice = await vscode.window.showWarningMessage(
+  private async confirmForgetTerminalSession(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
+    const confirmation = await vscode.window.showWarningMessage(
       `Could not recover the previous session for "${nodeTreeEntry.treeNode.name}".`,
       {
         modal: true,
-        detail: "The terminal may still be restoring, have a renamed title, or be open in another window. Starting a new terminal leaves every existing terminal untouched. Cancel and use TreeTY: Refresh to retry recovery.",
+        detail: "Only forget this session after closing its previous terminal, including in other windows. This starts a new terminal without closing any existing terminal. VS Code may still restore the old terminal later. Cancel and use TreeTY: Refresh to retry recovery.",
       },
-      "Start a new terminal",
+      "Forget previous session and start",
     );
 
-    if (choice !== "Start a new terminal") return false;
+    if (confirmation !== "Forget previous session and start") return false;
 
     const currentNodeTreeEntry = resolveNodeSearchEntry(this.workspaceModels, {
       workspaceId: nodeTreeEntry.workspaceModel.id, nodeId: nodeTreeEntry.treeNode.id,
@@ -677,8 +677,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     try {
       await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(nodeTreeEntry.treeNode.id);
     } catch (error) {
-      if (!(error instanceof TerminalRecoveryError)) throw error;
-      if (!(await this.confirmNewTerminal(nodeTreeEntry))) return;
+      if (!(error instanceof TerminalRecoveryError) || !error.canForget) throw error;
+      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return;
     }
 
     await this.syncExplorerDirectory(nodeTreeEntry, false);

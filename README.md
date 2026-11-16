@@ -257,9 +257,11 @@ Attention is independent from stopped, starting, idle, running, and failed statu
 
 ### Recover native terminals
 
-New TreeTY terminals carry a random recovery token in their native VS Code title, while the TreeTY view keeps the plain configured name. A scoped record in the extension's global storage directory lets TreeTY recognize that terminal after VS Code reconnects without its original creation environment. Each token has its own exclusively created file so writes from separate windows cannot replace one another's records. Renaming a TreeTY entry updates its tree label. The existing native title retains its token, and the next launch uses the new name.
+New TreeTY terminals carry a random recovery token in their native VS Code title, while the TreeTY view keeps the plain configured name. A scoped record in the extension's global storage directory lets TreeTY recognize that terminal after VS Code reconnects without its original creation environment. Each token has its own exclusively created file, and a lock for each leaf coordinates launches across windows sharing the same host and tree scope. Renaming a TreeTY entry updates its tree label. The existing native title retains its token, and the next launch uses the new name.
 
-If a saved session cannot be identified, TreeTY pauses automatic replacement. Run **TreeTY: Refresh** to retry, or open the leaf and choose **Start a new terminal** to create another session while leaving existing terminals untouched. A session in another window can also cause this pause. Historical terminals with neither creation identity nor a recovery token cannot be recovered automatically. See [terminal recovery](packages/vscode/README.md#recover-terminals-after-reload) for scope, timing, and title requirements.
+If a saved session cannot be identified, TreeTY pauses automatic replacement. Open the leaf or run **TreeTY: Refresh** to retry discovery. A known live owner or process blocks replacement, including when the session belongs to another window. If its liveness is unknown, opening the leaf offers **Forget previous session and start**. Use this only after closing the old terminal in every window. Forgetting retires its saved identity without closing any terminal, and VS Code may still restore an old tab later.
+
+Historical terminals with neither creation identity nor a recovery token cannot be recovered automatically. Missing or corrupt records limit duplicate prevention. See [terminal recovery](packages/vscode/README.md#recover-terminals-after-reload) for storage scope, asynchronous title recovery, and unavailable-storage behavior.
 
 ## Pi integration
 
@@ -312,7 +314,9 @@ Recovery regression tests exercise production host and engine code with restored
 1. Create an `onOpen` terminal, record its native title suffix, and confirm that its TreeTY label contains only the configured name.
 2. Reload that window. Confirm that the leaf reveals the original terminal without increasing the terminal count, then check shell activity and close handling.
 3. Create another terminal and rename its TreeTY entry. Confirm that the tree label changes, the existing native suffix survives, and a later restart uses the new name.
-4. Remove the suffix using VS Code's native rename action, then reload. If VS Code also drops the creation metadata, confirm that automatic replacement pauses and that **Start a new terminal** creates another terminal without closing the original.
+4. Open the same tree in another window and confirm that opening a leaf with a live session elsewhere does not launch a duplicate.
+5. Remove a suffix using VS Code's native rename action, then reload. If VS Code also drops the creation metadata, confirm that automatic replacement pauses. Close the old terminal before using **Forget previous session and start** for an unresolved session.
+6. Quit and reopen VS Code with terminal revival enabled. Confirm that a new shell PID does not discard the saved token, and use Refresh if a restored title arrives late.
 
 After dependencies are installed, package a snapshot without installing it:
 

@@ -27,20 +27,26 @@ export async function activate(
   });
   const remoteAuthority = vscode.workspace.workspaceFile?.authority ||
     vscode.workspace.workspaceFolders?.find((folder) => folder.uri.authority)?.uri.authority || "";
+  const terminalRecoveryHostId = JSON.stringify([
+    vscode.env.machineId,
+    vscode.env.remoteName ?? "local",
+    remoteAuthority,
+    extensionContext.globalStorageUri.toString(),
+  ]);
+  const terminalRecovery = extensionContext.globalStorageUri.scheme === "file"
+    ? new TerminalRecoveryRegistry(
+      new TerminalRecoveryFileStorage(path.join(extensionContext.globalStorageUri.fsPath, "terminal-recovery-v1")),
+      terminalRecoveryHostId,
+    )
+    : TerminalRecoveryRegistry.createUnavailable(
+      terminalRecoveryHostId,
+      "TreeTY needs extension storage on the extension host filesystem to coordinate terminal sessions across windows. The tree remains available, but new terminal launches are disabled.",
+    );
 
-  if (extensionContext.globalStorageUri.scheme !== "file") {
-    throw new Error("Terminal recovery requires extension storage on the extension host filesystem.");
+  if (terminalRecovery.unavailableReason) {
+    void vscode.window.showWarningMessage(terminalRecovery.unavailableReason);
   }
 
-  const terminalRecovery = new TerminalRecoveryRegistry(
-    new TerminalRecoveryFileStorage(path.join(extensionContext.globalStorageUri.fsPath, "terminal-recovery-v1")),
-    JSON.stringify([
-      vscode.env.machineId,
-      vscode.env.remoteName ?? "local",
-      remoteAuthority,
-      extensionContext.globalStorageUri.toString(),
-    ]),
-  );
   const treeTYController = new TreeTYController(
     terminalLinks,
     (nodeTreeEntry) =>
