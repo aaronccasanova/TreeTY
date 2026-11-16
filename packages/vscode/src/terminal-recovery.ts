@@ -343,6 +343,8 @@ export class TerminalRecoveryRegistry {
 
   private readonly owner: Pick<TerminalRecoveryOwner, "start" | "shutdown">;
 
+  private stopped = false;
+
   private readonly ownerLivenessById = new Map<string, TerminalRecoveryOwnerLiveness>();
 
   private readonly ownerProbesById = new Map<string, Promise<void>>();
@@ -407,6 +409,7 @@ export class TerminalRecoveryRegistry {
   }
 
   public async shutdown(): Promise<void> {
+    this.stopped = true;
     await this.owner.shutdown();
   }
 
@@ -446,7 +449,8 @@ export class TerminalRecoveryRegistry {
     terminalRecoveryTarget: TerminalRecoveryTarget,
   ): Promise<TerminalRecoveryRecord> {
     this.assertAvailable();
-    await this.owner.start();
+
+    const ownerProtocol = await this.startOwnerProtocol();
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const token = crypto.randomBytes(16).toString("base64url");
@@ -457,7 +461,7 @@ export class TerminalRecoveryRegistry {
         hostId: this.hostId,
         ownerId: this.ownerId,
         ownerProcessId: this.ownerProcessId,
-        ownerProtocol: "ipc-v1",
+        ...(ownerProtocol ? { ownerProtocol } : {}),
       };
 
       if (!getIsRecoveryRecord(terminalRecoveryRecord)) {
@@ -646,8 +650,13 @@ export class TerminalRecoveryRegistry {
     if (!updatedTerminalRecoveryRecord.ownerId) {
       delete updatedTerminalRecoveryRecord.ownerProtocol;
     } else if (updatedTerminalRecoveryRecord.ownerId === this.ownerId) {
-      await this.owner.start();
-      updatedTerminalRecoveryRecord.ownerProtocol = "ipc-v1";
+      const ownerProtocol = await this.startOwnerProtocol();
+
+      if (ownerProtocol) {
+        updatedTerminalRecoveryRecord.ownerProtocol = ownerProtocol;
+      } else {
+        delete updatedTerminalRecoveryRecord.ownerProtocol;
+      }
     } else if (Object.hasOwn(terminalRecoveryRecordUpdate, "ownerId") &&
       !Object.hasOwn(terminalRecoveryRecordUpdate, "ownerProtocol")) {
       delete updatedTerminalRecoveryRecord.ownerProtocol;
@@ -721,6 +730,23 @@ export class TerminalRecoveryRegistry {
 
   private assertAvailable(): void {
     if (this.unavailableReason) throw new Error(this.unavailableReason);
+  }
+
+  private async startOwnerProtocol(): Promise<TerminalRecoveryRecord["ownerProtocol"]> {
+    if (this.stopped) throw new Error("The terminal recovery owner has shut down.");
+
+    let ownerProtocol: TerminalRecoveryRecord["ownerProtocol"];
+
+    try {
+      await this.owner.start();
+      ownerProtocol = "ipc-v1";
+    } catch {
+      // PID ownership remains conservative when local IPC is unavailable.
+    }
+
+    if (this.stopped) throw new Error("The terminal recovery owner has shut down.");
+
+    return ownerProtocol;
   }
 
   private async refreshOwners(): Promise<void> {

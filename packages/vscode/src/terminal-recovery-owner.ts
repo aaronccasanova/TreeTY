@@ -26,8 +26,15 @@ export class TerminalRecoveryOwner {
   public async start(): Promise<void> {
     if (this.stopped) throw new Error("The terminal recovery owner has shut down.");
 
-    this.ownerStartup ??= this.startOwnerServer();
-    await this.ownerStartup;
+    const ownerStartup = this.ownerStartup ??= this.startOwnerServer();
+
+    try {
+      await ownerStartup;
+    } catch (error) {
+      if (this.ownerStartup === ownerStartup) this.ownerStartup = undefined;
+
+      throw error;
+    }
 
     if (this.stopped) throw new Error("The terminal recovery owner has shut down.");
   }

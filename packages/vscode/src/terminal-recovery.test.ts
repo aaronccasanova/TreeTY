@@ -680,7 +680,7 @@ nodeTest.test("owner probes fail closed, coalesce per owner, and retain legacy P
   assert.equal(absentOwnerRegistry.getRecordLiveness({ ...terminalRecoveryRecord, ownerProtocol: undefined }), "other-window");
 });
 
-nodeTest.test("ownership is persisted only after the endpoint is ready and startup failure never writes a record", async () => {
+nodeTest.test("ownership waits for the endpoint startup attempt before persistence", async () => {
   const fixture = createFixture();
   let startOwner: (() => void) | undefined;
   const ownerStartup = new Promise<void>((resolve) => { startOwner = resolve; });
@@ -694,16 +694,101 @@ nodeTest.test("ownership is persisted only after the endpoint is ready and start
   startOwner?.();
   await terminalRecoveryRecordPromise;
   assert.equal(fixture.storage.keys().length, 1);
+});
 
-  const failedRegistry = createRegistry(fixture.storage, "host", {
+nodeTest.test("failed owner startup uses conservative PID ownership for creation and recovery until a retry succeeds", async () => {
+  const fixture = createFixture();
+  const previousTerminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+  let canStartOwner = false;
+  let ownerStartupCount = 0;
+  const registry = createRegistry(fixture.storage, "host", {
     owner: {
-      start: async () => { throw Object.assign(new Error("socket denied"), { code: "EACCES" }); },
+      start: async () => {
+        ownerStartupCount += 1;
+
+        if (!canStartOwner) throw Object.assign(new Error("socket denied"), { code: "EACCES" });
+      },
+      shutdown: async () => {},
+    },
+  });
+  const terminalRecoveryRecord = await registry.createRecord({ ...createTarget(), sessionId: "new-session" });
+
+  assert.equal(Object.hasOwn(terminalRecoveryRecord, "ownerProtocol"), false);
+  assert.equal(terminalRecoveryRecord.ownerId, registry.ownerId);
+  assert.equal(terminalRecoveryRecord.ownerProcessId, registry.ownerProcessId);
+  await fixture.registry.shutdown();
+
+  const claimedTerminalRecoveryRecord = await registry.runWithNodeLock(previousTerminalRecoveryRecord, () =>
+    registry.updateRecord(previousTerminalRecoveryRecord.token, {
+      ownerId: registry.ownerId, ownerProcessId: registry.ownerProcessId, ownerBindingId: "recovered-binding",
+    }),
+  );
+
+  assert.ok(claimedTerminalRecoveryRecord);
+  assert.equal(Object.hasOwn(claimedTerminalRecoveryRecord, "ownerProtocol"), false);
+  assert.equal(claimedTerminalRecoveryRecord.ownerBindingId, "recovered-binding");
+  assert.equal(claimedTerminalRecoveryRecord.sessionId, previousTerminalRecoveryRecord.sessionId);
+  assert.equal(claimedTerminalRecoveryRecord.token, previousTerminalRecoveryRecord.token);
+
+  const otherRegistry = createRegistry(fixture.storage, "host", {
+    getProcessIsAlive: () => true,
+    getOwnerLiveness: async () => "dead",
+  });
+
+  await otherRegistry.refresh(true);
+  assert.equal(otherRegistry.getRecordLiveness(terminalRecoveryRecord), "other-window");
+  assert.equal(otherRegistry.getRecordLiveness(claimedTerminalRecoveryRecord), "other-window");
+  canStartOwner = true;
+
+  const upgradedTerminalRecoveryRecord = await registry.runWithNodeLock(claimedTerminalRecoveryRecord, () =>
+    registry.updateRecord(claimedTerminalRecoveryRecord.token, { ownerBindingId: "later-binding" }),
+  );
+  const newTerminalRecoveryRecord = await registry.createRecord({ ...createTarget(), sessionId: "later-session" });
+
+  assert.equal(upgradedTerminalRecoveryRecord?.ownerProtocol, "ipc-v1");
+  assert.equal(newTerminalRecoveryRecord.ownerProtocol, "ipc-v1");
+  assert.equal(ownerStartupCount, 4);
+});
+
+nodeTest.test("owner fallback never hides persistence failures", async () => {
+  const fixture = createFixture();
+  const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+  const registry = createRegistry(fixture.storage, "host", {
+    owner: {
+      start: async () => { throw new Error("socket denied"); },
       shutdown: async () => {},
     },
   });
 
-  await assert.rejects(failedRegistry.createRecord(createTarget()), /socket denied/);
+  fixture.storage.update = async () => { throw new Error("persistence unavailable"); };
+
+  await assert.rejects(registry.createRecord(createTarget()), /persistence unavailable/);
+  await assert.rejects(registry.updateRecord(terminalRecoveryRecord.token, {
+    ownerId: registry.ownerId, ownerProcessId: registry.ownerProcessId,
+  }), /persistence unavailable/);
   assert.equal(fixture.storage.keys().length, 1);
+  assert.deepEqual(fixture.registry.getRecord(terminalRecoveryRecord.token), terminalRecoveryRecord);
+});
+
+nodeTest.test("shutdown prevents fallback ownership during a failed startup and on later creation or recovery", async () => {
+  const fixture = createFixture();
+  const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+  let failOwnerStartup: ((error: Error) => void) | undefined;
+  const ownerStartup = new Promise<void>((_resolve, reject) => { failOwnerStartup = reject; });
+  const registry = createRegistry(fixture.storage, "host", {
+    owner: { start: async () => ownerStartup, shutdown: async () => {} },
+  });
+  const terminalRecoveryRecordPromise = registry.createRecord({ ...createTarget(), sessionId: "pending-session" });
+
+  await registry.shutdown();
+  failOwnerStartup?.(new Error("socket denied"));
+  await assert.rejects(terminalRecoveryRecordPromise, /shut down/);
+  await assert.rejects(registry.createRecord(createTarget()), /shut down/);
+  await assert.rejects(registry.updateRecord(terminalRecoveryRecord.token, {
+    ownerId: registry.ownerId, ownerProcessId: registry.ownerProcessId,
+  }), /shut down/);
+  assert.equal(fixture.storage.keys().length, 1);
+  assert.deepEqual(fixture.registry.getRecord(terminalRecoveryRecord.token), terminalRecoveryRecord);
 });
 
 nodeTest.test("unavailable coordination preserves read access and rejects launch reservations", async () => {

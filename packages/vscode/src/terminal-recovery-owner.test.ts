@@ -42,6 +42,43 @@ nodeTest.test("another owner cannot replace or remove an occupied endpoint", asy
   assert.equal(await getTerminalRecoveryOwnerLiveness(identity), "alive");
 });
 
+nodeTest.test("concurrent owner starts share failed attempts and retry after the endpoint becomes available", async (testContext) => {
+  const identity = { hostId: "host", ownerId: crypto.randomUUID() };
+  const existingOwner = new TerminalRecoveryOwner(identity);
+  const retryingOwner = new TerminalRecoveryOwner(identity);
+
+  testContext.after(() => Promise.all([existingOwner.shutdown(), retryingOwner.shutdown()]));
+  await existingOwner.start();
+
+  const startupResults = await Promise.allSettled([retryingOwner.start(), retryingOwner.start()]);
+
+  for (const startupResult of startupResults) {
+    assert.equal(startupResult.status, "rejected");
+
+    if (startupResult.status === "rejected") assert.equal(startupResult.reason.code, "EADDRINUSE");
+  }
+
+  assert.equal(await getTerminalRecoveryOwnerLiveness(identity), "alive");
+  await existingOwner.shutdown();
+  await Promise.all([retryingOwner.start(), retryingOwner.start()]);
+  assert.equal(await getTerminalRecoveryOwnerLiveness(identity), "alive");
+});
+
+nodeTest.test("shutdown during owner startup closes the endpoint and prevents later retries", async (testContext) => {
+  const identity = { hostId: "host", ownerId: crypto.randomUUID() };
+  const owner = new TerminalRecoveryOwner(identity);
+
+  testContext.after(() => owner.shutdown());
+
+  const ownerStartup = owner.start();
+  const ownerShutdown = owner.shutdown();
+
+  await assert.rejects(ownerStartup, /shut down/);
+  await ownerShutdown;
+  assert.equal(await getTerminalRecoveryOwnerLiveness(identity), "dead");
+  await assert.rejects(owner.start(), /shut down/);
+});
+
 nodeTest.test("a crashed owner leaves no live proof even when its Unix socket remains", async (testContext) => {
   const identity = { hostId: "host", ownerId: crypto.randomUUID() };
   const ownerEndpoint = buildTerminalRecoveryOwnerEndpoint(identity);

@@ -180,6 +180,56 @@ nodeTest.test("recovers identity across registry and host replacement after the 
   assert.equal(restoredFixture.createdTerminals.length, 0);
 });
 
+nodeTest.test("owner endpoint failure preserves launches, restored recovery, and cross-window exclusion", async (testContext) => {
+  const storage = createStorage();
+  const registryOptions = {
+    owner: {
+      start: async () => { throw Object.assign(new Error("Owner endpoint unavailable"), { code: "EACCES" }); },
+      shutdown: async () => {},
+    },
+    getProcessIsAlive: () => true,
+    getOwnerLiveness: async () => "dead",
+  };
+  const fixture = createFixture({ storage, registryOptions, terminals: [] });
+  testContext.after(() => fixture.host.dispose());
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+  const hostedTerminalSession = await fixture.host.createSession(terminalLaunchRequest);
+  const recoveryRecord = fixture.recordAtCreation;
+
+  assert.equal(Object.hasOwn(recoveryRecord, "ownerProtocol"), false);
+  assert.equal(recoveryRecord.ownerProcessId, fixture.registry.ownerProcessId);
+
+  const restoredTerminal = fixture.createdTerminals[0];
+
+  restoredTerminal.creationOptions = { env: {} };
+  fixture.host.dispose();
+  await fixture.host.flushSessionCleanup();
+
+  const restoredFixture = createFixture({ storage, registryOptions, terminals: [restoredTerminal] });
+
+  restoredFixture.resolvedTreeConfig.tree[0].restartPolicy = "onOpen";
+
+  const treeTYEngine = new engineModule.exports.TreeTYEngine(restoredFixture.resolvedTreeConfig, restoredFixture.host);
+
+  testContext.after(() => treeTYEngine.dispose());
+  await treeTYEngine.start();
+  await treeTYEngine.openTerminal("first");
+
+  assert.equal(treeTYEngine.getTerminalSessionState("first").hostSessionId, hostedTerminalSession.id);
+  assert.deepEqual(restoredTerminal.showOptions, [false]);
+  assert.equal(restoredFixture.createdTerminals.length, 0);
+  assert.equal(restoredFixture.registry.getRecord(recoveryRecord.token).ownerId, restoredFixture.registry.ownerId);
+  assert.equal(Object.hasOwn(restoredFixture.registry.getRecord(recoveryRecord.token), "ownerProtocol"), false);
+
+  const otherWindowFixture = createFixture({ storage, registryOptions, terminals: [] });
+
+  testContext.after(() => otherWindowFixture.host.dispose());
+  otherWindowFixture.host.allowNextSessionCreation("first");
+  await assert.rejects(otherWindowFixture.host.createSession(terminalLaunchRequest),
+    error => error.canForget === false && /another VS Code window/.test(error.message));
+  assert.equal(otherWindowFixture.createdTerminals.length, 0);
+});
+
 nodeTest.test("environment recovery after a native rename keeps the exact record available for close cleanup", async (testContext) => {
   const storage = createStorage();
   const fixture = createFixture({ storage, terminals: [] });
