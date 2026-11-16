@@ -18,7 +18,7 @@ pnpm install:snapshot
 
 The installer checks for `code`, runs `pnpm install --frozen-lockfile`, builds the core and extension, packages a timestamped VSIX under `artifacts/`, and runs `code --install-extension <artifact> --force`. The CLI is bundled from the same checkout as the extension. No separate CLI installation or npm publication is needed.
 
-Run "Developer: Reload Window" after installation, then create new integrated terminals. TreeTY prepends its bundled CLI directory to new terminals' `PATH`, including ordinary VS Code terminals. Existing terminals retain their previous environment, so recreate them to pick up the installed build. The CLI still requires Node.js 22 or newer on `PATH`.
+Run "Developer: Reload Window" after installation. TreeTY provides its bundled CLI in new and restored integrated terminals, including ordinary VS Code terminals. Its persistent `PATH` entry points to a stable copy in extension storage, refreshed when TreeTY activates. Reloads, full restarts, and later updates keep that path working. Recreate terminals opened before this persistent CLI was installed once to pick up the stable path. The CLI still requires Node.js 22 or newer on `PATH`.
 
 After pulling changes or editing a feature locally, rerun `pnpm install:snapshot`. Snapshot timestamps distinguish artifact filenames without changing source package versions. To keep using local snapshots, disable auto-update for TreeTY in VS Code's Extensions view so a later Marketplace release does not replace your local build.
 

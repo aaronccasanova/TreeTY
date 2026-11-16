@@ -18,7 +18,15 @@ let activeTreeTYController: TreeTYController | undefined;
 export async function activate(
   extensionContext: vscode.ExtensionContext,
 ): Promise<void> {
-  configureTerminalEnvironment(extensionContext);
+  try {
+    await configureTerminalEnvironment(extensionContext);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    void vscode.window.showWarningMessage(
+      `TreeTY couldn't update its bundled terminal CLI. ${errorMessage}`,
+    );
+  }
 
   const terminalLinks = new TerminalLinkManager({
     extensionId: extensionContext.extension.id,
