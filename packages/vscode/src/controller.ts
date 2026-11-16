@@ -129,9 +129,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
 
   private readonly vscodeDisposables: vscode.Disposable[];
 
+  private readonly vscodeTerminalHosts = new Set<VscodeTerminalHost>();
+
   private workspaceModels: WorkspaceModel[] = [];
 
   private workspaceReloadPromise: Promise<void> = Promise.resolve();
+
+  private deactivationPromise: Promise<void> | undefined;
+
+  private disposed = false;
 
   public readonly onDidChangeWorkspaceModels =
     this.workspaceModelChangeEmitter.event;
@@ -752,11 +758,41 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
+  public deactivate(): Promise<void> {
+    if (this.deactivationPromise) return this.deactivationPromise;
+
+    const vscodeTerminalHosts = [...this.vscodeTerminalHosts];
+
+    this.dispose();
+    this.deactivationPromise = this.workspaceReloadPromise.then(async () => {
+      const cleanupResults = await Promise.allSettled(
+        vscodeTerminalHosts.map((vscodeTerminalHost) => vscodeTerminalHost.flushSessionCleanup()),
+      );
+      const cleanupErrors = cleanupResults.flatMap((cleanupResult) =>
+        cleanupResult.status === "rejected" ? [cleanupResult.reason] : [],
+      );
+
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, "Could not finish terminal cleanup before deactivation.");
+      }
+    });
+
+    return this.deactivationPromise;
+  }
+
   public dispose(): void {
+    if (this.disposed) return;
+
+    this.disposed = true;
+
     for (const workspaceModel of this.workspaceModels) {
       if (workspaceModel.kind === "configured") {
         workspaceModel.treeTYEngine.dispose();
       }
+    }
+
+    for (const vscodeTerminalHost of this.vscodeTerminalHosts) {
+      vscodeTerminalHost.dispose();
     }
 
     for (const vscodeDisposable of this.vscodeDisposables) {
@@ -764,6 +800,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     }
 
     this.workspaceModelChangeEmitter.dispose();
+  }
+
+  private disposeTerminalHost(vscodeTerminalHost: VscodeTerminalHost): void {
+    vscodeTerminalHost.dispose();
+    void vscodeTerminalHost.flushSessionCleanup().then(() => {
+      this.vscodeTerminalHosts.delete(vscodeTerminalHost);
+    }).catch((error: unknown) => {
+      console.error("TreeTY could not finish terminal cleanup:", error);
+    });
   }
 
   private getConfigFileWatcherSubscriptions(
@@ -820,9 +865,13 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private queueWorkspaceOperation(
     workspaceOperation: () => Promise<void>,
   ): Promise<void> {
-    const workspaceReloadPromise = this.workspaceReloadPromise.then(
-      workspaceOperation,
-    );
+    if (this.disposed) return Promise.resolve();
+
+    const workspaceReloadPromise = this.workspaceReloadPromise.then(async () => {
+      if (this.disposed) return;
+
+      await workspaceOperation();
+    });
 
     this.workspaceReloadPromise = workspaceReloadPromise.catch(() => undefined);
 
@@ -833,6 +882,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     changedFileUri: vscode.Uri,
     changedFileKind: "config" | "state",
   ): Promise<void> {
+    if (this.disposed) return;
+
     const workspaceModel = this.workspaceModels.find((candidateWorkspaceModel) => {
       const targetFileUri =
         changedFileKind === "config"
@@ -870,6 +921,9 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     const treeState = await loadTreeStateFile(
       workspaceModel.configFileUri.fsPath,
     );
+
+    if (this.disposed) return;
+
     const resolvedTreeConfig = resolveTreeConfig(
       treeConfig,
       workspaceModel.workspaceDirUri.fsPath,
@@ -880,6 +934,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       workspaceModel.vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
       await workspaceModel.treeTYEngine.reconcile(resolvedTreeConfig);
     }
+
+    if (this.disposed) return;
 
     workspaceModel.treeConfig = treeConfig;
     workspaceModel.treeState = treeState;
@@ -910,6 +966,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private async reloadWorkspaceModel(
     previousWorkspaceModel: WorkspaceModel,
   ): Promise<void> {
+    if (this.disposed) return;
+
     const workspaceModelIndex = this.workspaceModels.findIndex(
       (workspaceModel) => workspaceModel.id === previousWorkspaceModel.id,
     );
@@ -930,6 +988,15 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       configSource: previousWorkspaceModel.configSource,
     });
 
+    if (this.disposed) {
+      if (nextWorkspaceModel.kind === "configured") {
+        nextWorkspaceModel.treeTYEngine.dispose();
+        this.disposeTerminalHost(nextWorkspaceModel.vscodeTerminalHost);
+      }
+
+      return;
+    }
+
     if (previousWorkspaceModel.kind === "configured") {
       if (nextWorkspaceModel.kind !== "configured") {
         for (const treeNode of previousWorkspaceModel.resolvedTreeConfig.tree) {
@@ -940,6 +1007,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       }
 
       previousWorkspaceModel.treeTYEngine.dispose();
+      this.disposeTerminalHost(previousWorkspaceModel.vscodeTerminalHost);
     }
 
     this.workspaceModels[workspaceModelIndex] = nextWorkspaceModel;
@@ -947,6 +1015,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   }
 
   private async reloadWorkspaces(): Promise<void> {
+    if (this.disposed) return;
+
     const workspaceFolders = vscode.workspace.workspaceFolders ?? [];
     const globalConfigExists = await getFileExists(this.globalConfigFileUri);
     const globalTreeVisibility = vscode.workspace
@@ -965,6 +1035,17 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
     const previousWorkspaceModels = this.workspaceModels;
 
+    if (this.disposed) {
+      for (const nextWorkspaceModel of nextWorkspaceModels) {
+        if (nextWorkspaceModel.kind !== "configured") continue;
+
+        nextWorkspaceModel.treeTYEngine.dispose();
+        this.disposeTerminalHost(nextWorkspaceModel.vscodeTerminalHost);
+      }
+
+      return;
+    }
+
     this.workspaceModels = nextWorkspaceModels;
 
     closeRemovedTerminalSessions(previousWorkspaceModels, nextWorkspaceModels);
@@ -972,6 +1053,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     for (const previousWorkspaceModel of previousWorkspaceModels) {
       if (previousWorkspaceModel.kind === "configured") {
         previousWorkspaceModel.treeTYEngine.dispose();
+        this.disposeTerminalHost(previousWorkspaceModel.vscodeTerminalHost);
       }
     }
 
@@ -981,6 +1063,8 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
   private async loadWorkspaceModel(
     workspaceModelLocation: WorkspaceModelLocation,
   ): Promise<WorkspaceModel> {
+    if (this.disposed) return { kind: "unconfigured", ...workspaceModelLocation };
+
     let configFileContent: Uint8Array;
 
     try {
@@ -1005,11 +1089,16 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     let vscodeTerminalHost: VscodeTerminalHost | undefined;
 
     try {
+      if (this.disposed) return { kind: "unconfigured", ...workspaceModelLocation };
+
       const treeConfigFileContent = new TextDecoder().decode(configFileContent);
       const treeConfig = parseTreeConfigContent(treeConfigFileContent);
       const treeState = await loadTreeStateFile(
         workspaceModelLocation.configFileUri.fsPath,
       );
+
+      if (this.disposed) return { kind: "unconfigured", ...workspaceModelLocation };
+
       const resolvedTreeConfig = resolveTreeConfig(
         treeConfig,
         workspaceModelLocation.workspaceDirUri.fsPath,
@@ -1022,6 +1111,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         this.terminalLinks,
         this.terminalRecovery,
       );
+      this.vscodeTerminalHosts.add(vscodeTerminalHost);
       vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
       vscodeTerminalHost.onDidChangeActivity((nodeId) =>
         this.workspaceModelChangeEmitter.fire({
@@ -1052,7 +1142,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         vscodeTerminalHost,
       };
     } catch (error) {
-      vscodeTerminalHost?.dispose();
+      if (vscodeTerminalHost) this.disposeTerminalHost(vscodeTerminalHost);
 
       return {
         kind: "invalid",

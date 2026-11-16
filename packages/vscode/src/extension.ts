@@ -13,6 +13,8 @@ import { TreeCollapseController } from "./tree-collapse-controller";
 import { TreeTYTreeProvider } from "./tree-provider";
 import type { NodeTreeEntry, TreeEntry } from "./tree-provider";
 
+let activeTreeTYController: TreeTYController | undefined;
+
 export async function activate(
   extensionContext: vscode.ExtensionContext,
 ): Promise<void> {
@@ -33,9 +35,11 @@ export async function activate(
     remoteAuthority,
     extensionContext.globalStorageUri.toString(),
   ]);
-  const terminalRecovery = extensionContext.globalStorageUri.scheme === "file"
+  // The Node host's filesystem path also covers desktop vscode-userdata: storage URIs.
+  const globalStorageDirPath = extensionContext.globalStoragePath;
+  const terminalRecovery = path.isAbsolute(globalStorageDirPath)
     ? new TerminalRecoveryRegistry(
-      new TerminalRecoveryFileStorage(path.join(extensionContext.globalStorageUri.fsPath, "terminal-recovery-v1")),
+      new TerminalRecoveryFileStorage(path.join(globalStorageDirPath, "terminal-recovery-v1")),
       terminalRecoveryHostId,
     )
     : TerminalRecoveryRegistry.createUnavailable(
@@ -53,6 +57,8 @@ export async function activate(
       treeTYTreeView.reveal(nodeTreeEntry, { select: true, focus: false }),
     terminalRecovery,
   );
+  activeTreeTYController = treeTYController;
+
   const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
   const treeTYTreeView: vscode.TreeView<TreeEntry> = vscode.window.createTreeView(
     "treety.terminals",
@@ -217,7 +223,15 @@ export async function activate(
   await startup;
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  const treeTYController = activeTreeTYController;
+
+  try {
+    await treeTYController?.deactivate();
+  } finally {
+    if (activeTreeTYController === treeTYController) activeTreeTYController = undefined;
+  }
+}
 
 function getCommandTreeEntry(
   treeEntry: TreeEntry | undefined,

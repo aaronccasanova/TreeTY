@@ -29,7 +29,11 @@ import { TerminalActivityTracker } from "./terminal-activity";
 import type { TerminalActivity } from "./terminal-activity";
 import type { TerminalLinkManager } from "./terminal-links";
 import { buildTerminalTitle, getTerminalRecoveryToken } from "./terminal-recovery";
-import type { TerminalRecoveryRecord, TerminalRecoveryRegistry } from "./terminal-recovery";
+import type {
+  TerminalRecoveryRecord,
+  TerminalRecoveryRecordUpdate,
+  TerminalRecoveryRegistry,
+} from "./terminal-recovery";
 
 interface TerminalMetadata {
   sessionId: string;
@@ -68,6 +72,8 @@ export class VscodeTerminalHost implements TerminalHost {
   private readonly ownerBindingId = crypto.randomUUID();
 
   private readonly pendingSessionTokens = new Set<string>();
+
+  private readonly sessionOperationCompletions = new Set<Promise<void>>();
 
   private readonly terminalBySessionId = new Map<string, vscode.Terminal>();
 
@@ -128,9 +134,9 @@ export class VscodeTerminalHost implements TerminalHost {
   }
 
   public getSessions(): Promise<HostedTerminalSession[]> {
-    this.sessionDiscovery ??= this.discoverSessions().finally(() => {
+    this.sessionDiscovery ??= this.trackSessionOperation(this.discoverSessions().finally(() => {
       this.sessionDiscovery = undefined;
-    });
+    }));
 
     return this.sessionDiscovery;
   }
@@ -147,7 +153,11 @@ export class VscodeTerminalHost implements TerminalHost {
     return this.recoveryMessageByNodeId.get(nodeId);
   }
 
-  public async createSession(
+  public createSession(terminalLaunchRequest: TerminalLaunchRequest): Promise<HostedTerminalSession> {
+    return this.trackSessionOperation(this.createNativeSession(terminalLaunchRequest));
+  }
+
+  private async createNativeSession(
     terminalLaunchRequest: TerminalLaunchRequest,
   ): Promise<HostedTerminalSession> {
     const forgetPreviousSession = this.allowedSessionCreations.delete(terminalLaunchRequest.nodeId);
@@ -188,6 +198,14 @@ export class VscodeTerminalHost implements TerminalHost {
         terminalLaunchRequest.signal?.throwIfAborted();
 
         if (this.disposed) throw new Error("The terminal host was disposed before launch.");
+
+        const closedTerminalRecoveryRecords = await this.terminalRecovery.retireClosedRecordsForNode({
+          configFilePath: this.configFilePath, nodeId: terminalLaunchRequest.nodeId,
+        });
+
+        await Promise.all(closedTerminalRecoveryRecords.map((terminalRecoveryRecord) =>
+          clearTreeNodeSession(this.configFilePath, terminalRecoveryRecord.nodeId, terminalRecoveryRecord.sessionId),
+        )).catch(reportActivityError);
 
         const unresolvedRecords = this.assertSessionCreationAllowed(
           terminalLaunchRequest.nodeId, forgetPreviousSession,
@@ -321,10 +339,12 @@ export class VscodeTerminalHost implements TerminalHost {
   }
 
   public dispose(): void {
+    if (this.disposed) return;
+
     this.disposed = true;
 
     for (const terminalMetadata of this.metadataByTerminal.values()) {
-      void this.releaseSessionOwnership(terminalMetadata).catch(reportActivityError);
+      void this.trackSessionOperation(this.releaseSessionOwnership(terminalMetadata).catch(reportActivityError));
     }
 
     for (const vscodeDisposable of this.vscodeDisposables) {
@@ -343,6 +363,22 @@ export class VscodeTerminalHost implements TerminalHost {
     this.terminalBySessionId.clear();
     this.metadataByTerminal.clear();
     this.closingTerminals.clear();
+  }
+
+  public async flushSessionCleanup(): Promise<void> {
+    while (this.sessionOperationCompletions.size > 0) {
+      await Promise.all(this.sessionOperationCompletions);
+    }
+  }
+
+  private trackSessionOperation<Result>(sessionOperation: Promise<Result>): Promise<Result> {
+    const sessionOperationCompletion = sessionOperation.then(() => {}, () => {}).finally(() => {
+      this.sessionOperationCompletions.delete(sessionOperationCompletion);
+    });
+
+    this.sessionOperationCompletions.add(sessionOperationCompletion);
+
+    return sessionOperation;
   }
 
   private assertSessionCreationAllowed(
@@ -378,7 +414,7 @@ export class VscodeTerminalHost implements TerminalHost {
         );
       }
 
-      if (recordLiveness === "owned" || recordLiveness === "running") {
+      if (recordLiveness === "owned") {
         this.throwRecoveryError(nodeId,
           "This leaf already has a running or starting terminal. Its tab may be restoring or have a renamed title. Close that terminal before starting another, or refresh TreeTY to retry attachment.",
         );
@@ -390,8 +426,14 @@ export class VscodeTerminalHost implements TerminalHost {
     );
 
     if (unresolvedRecords.length > 0 && !forgetPreviousSession) {
+      const hasRunningProcess = unresolvedRecords.some((terminalRecoveryRecord) =>
+        this.terminalRecovery.getRecordLiveness(terminalRecoveryRecord) === "running",
+      );
+
       this.throwRecoveryError(nodeId,
-        "A previous terminal session could not be recovered. Refresh TreeTY to retry. If you have closed the old terminal in every window, open this leaf to forget its saved session and start again.", true,
+        hasRunningProcess
+          ? "A saved terminal process may still be running, but its terminal could not be recovered. Refresh TreeTY to retry. If you have closed the old terminal in every window, open this leaf to forget its saved session and start again."
+          : "A previous terminal session could not be recovered. Refresh TreeTY to retry. If you have closed the old terminal in every window, open this leaf to forget its saved session and start again.", true,
       );
     }
 
@@ -551,7 +593,7 @@ export class VscodeTerminalHost implements TerminalHost {
       const hasOtherLiveSession = otherRecoveryRecords.some((otherRecoveryRecord) => {
         const recordLiveness = this.terminalRecovery.getRecordLiveness(otherRecoveryRecord);
 
-        return recordLiveness === "other-window" || recordLiveness === "running" ||
+        return recordLiveness === "other-window" ||
           (recordLiveness === "owned" && !this.pendingSessionTokens.has(otherRecoveryRecord.token));
       });
 
@@ -576,6 +618,8 @@ export class VscodeTerminalHost implements TerminalHost {
         ownerProcessId: this.terminalRecovery.ownerProcessId,
         ownerBindingId: this.ownerBindingId,
         retired: false,
+        closeReason: undefined,
+        persistence: undefined,
       });
 
       return true;
@@ -603,7 +647,11 @@ export class VscodeTerminalHost implements TerminalHost {
     }).catch(reportActivityError);
   }
 
-  private async releaseSessionOwnership(terminalMetadata: TerminalMetadata, clearState = false): Promise<void> {
+  private async releaseSessionOwnership(
+    terminalMetadata: TerminalMetadata,
+    clearState = false,
+    terminalRecoveryRecordUpdate: TerminalRecoveryRecordUpdate = {},
+  ): Promise<void> {
     if (!terminalMetadata.recoveryToken) {
       if (clearState) {
         await clearTreeNodeSession(this.configFilePath, terminalMetadata.nodeId, terminalMetadata.sessionId);
@@ -630,6 +678,7 @@ export class VscodeTerminalHost implements TerminalHost {
           : Promise.resolve(),
         terminalRecoveryRecord
           ? this.terminalRecovery.updateRecord(terminalRecoveryRecord.token, {
+            ...terminalRecoveryRecordUpdate,
             ownerId: undefined, ownerProcessId: undefined, ownerBindingId: undefined,
           })
           : Promise.resolve(),
@@ -731,7 +780,9 @@ export class VscodeTerminalHost implements TerminalHost {
     this.terminalBySessionId.delete(terminalMetadata.sessionId);
     this.removeSessionActivity(terminalMetadata.sessionId);
 
-    void this.finishClosedSession(terminal, terminalMetadata, requestedClose).catch(reportActivityError);
+    void this.trackSessionOperation(
+      this.finishClosedSession(terminal, terminalMetadata, requestedClose).catch(reportActivityError),
+    );
 
     this.emitTerminalHostEvent({
       type: "closed",
@@ -753,8 +804,25 @@ export class VscodeTerminalHost implements TerminalHost {
       return;
     }
 
-    // User can mean a native transfer. Shutdown can mean reconnect or process revival.
-    await this.releaseSessionOwnership(terminalMetadata, true);
+    const terminalRecoveryRecordUpdate: TerminalRecoveryRecordUpdate = {};
+
+    if (terminal.exitStatus?.reason === vscode.TerminalExitReason.User) {
+      // VS Code also reports User when transferring a still-persisted terminal to another window.
+      terminalRecoveryRecordUpdate.closeReason = "user";
+    }
+
+    if (terminal.exitStatus?.reason === vscode.TerminalExitReason.Shutdown) {
+      const terminalConfiguration = vscode.workspace.getConfiguration("terminal.integrated");
+
+      terminalRecoveryRecordUpdate.closeReason = "shutdown";
+      terminalRecoveryRecordUpdate.persistence = !terminalConfiguration.get("enablePersistentSessions", true)
+        ? "disabled"
+        : terminalConfiguration.get<string>("persistentSessionReviveProcess", "onExit") === "never"
+          ? "reconnect"
+          : "revive";
+    }
+
+    await this.releaseSessionOwnership(terminalMetadata, true, terminalRecoveryRecordUpdate);
   }
 
   private async clearSession(terminalMetadata: TerminalMetadata): Promise<void> {

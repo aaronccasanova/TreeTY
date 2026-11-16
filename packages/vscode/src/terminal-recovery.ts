@@ -20,6 +20,8 @@ export interface TerminalRecoveryRecord extends TerminalRecoveryScope {
   ownerProcessId?: number;
   terminalProcessId?: number;
   retired?: boolean;
+  closeReason?: "user" | "shutdown";
+  persistence?: "disabled" | "reconnect" | "revive";
 }
 
 export interface TerminalRecoveryNodeScope {
@@ -30,7 +32,8 @@ export interface TerminalRecoveryNodeScope {
 export type TerminalRecoveryRecordLiveness = "owned" | "other-window" | "running" | "unknown";
 
 export type TerminalRecoveryRecordUpdate = Pick<
-  TerminalRecoveryRecord, "ownerId" | "ownerBindingId" | "ownerProcessId" | "terminalProcessId" | "retired"
+  TerminalRecoveryRecord,
+  "ownerId" | "ownerBindingId" | "ownerProcessId" | "terminalProcessId" | "retired" | "closeReason" | "persistence"
 >;
 
 interface TerminalRecoveryRegistryOptions {
@@ -496,11 +499,52 @@ export class TerminalRecoveryRegistry {
       return "other-window";
     }
 
+    if (terminalRecoveryRecord.retired) return "unknown";
+
     if (terminalRecoveryRecord.terminalProcessId && getProcessIsAlive(terminalRecoveryRecord.terminalProcessId)) {
       return "running";
     }
 
     return "unknown";
+  }
+
+  // The caller must hold this node's lock while retiring records and reserving a replacement.
+  public async retireClosedRecordsForNode(
+    terminalRecoveryNodeScope: TerminalRecoveryNodeScope,
+  ): Promise<TerminalRecoveryRecord[]> {
+    this.assertAvailable();
+
+    const retiredTerminalRecoveryRecords: TerminalRecoveryRecord[] = [];
+    const getProcessIsAlive = this.options.getProcessIsAlive ?? getProcessIsAliveOnHost;
+
+    for (const terminalRecoveryRecord of this.getRecordsForNode(terminalRecoveryNodeScope)) {
+      await this.refreshRecord(terminalRecoveryRecord.token);
+
+      const currentTerminalRecoveryRecord = this.getRecord(terminalRecoveryRecord.token);
+
+      if (!currentTerminalRecoveryRecord || currentTerminalRecoveryRecord.retired ||
+        currentTerminalRecoveryRecord.configFilePath !== terminalRecoveryNodeScope.configFilePath ||
+        currentTerminalRecoveryRecord.nodeId !== terminalRecoveryNodeScope.nodeId) continue;
+
+      const recordLiveness = this.getRecordLiveness(currentTerminalRecoveryRecord);
+
+      if (recordLiveness === "owned" || recordLiveness === "other-window") continue;
+
+      const isPersistenceDisabledShutdown = currentTerminalRecoveryRecord.closeReason === "shutdown" &&
+        currentTerminalRecoveryRecord.persistence === "disabled";
+      const hasClosedTerminalProcess = currentTerminalRecoveryRecord.terminalProcessId !== undefined &&
+        !getProcessIsAlive(currentTerminalRecoveryRecord.terminalProcessId);
+      const canRetireClosedTerminalProcess = hasClosedTerminalProcess &&
+        currentTerminalRecoveryRecord.closeReason === "shutdown" && currentTerminalRecoveryRecord.persistence === "reconnect";
+
+      if (!isPersistenceDisabledShutdown && !canRetireClosedTerminalProcess) continue;
+
+      const retiredTerminalRecoveryRecord = await this.updateRecord(currentTerminalRecoveryRecord.token, { retired: true });
+
+      if (retiredTerminalRecoveryRecord) retiredTerminalRecoveryRecords.push(retiredTerminalRecoveryRecord);
+    }
+
+    return retiredTerminalRecoveryRecords;
   }
 
   public async updateRecord(
@@ -516,7 +560,7 @@ export class TerminalRecoveryRegistry {
 
     const updatedTerminalRecoveryRecord = { ...terminalRecoveryRecord };
 
-    for (const field of ["ownerId", "ownerBindingId", "ownerProcessId", "terminalProcessId", "retired"] as const) {
+    for (const field of ["ownerId", "ownerBindingId", "ownerProcessId", "terminalProcessId", "retired", "closeReason", "persistence"] as const) {
       if (!Object.hasOwn(terminalRecoveryRecordUpdate, field)) continue;
 
       if (terminalRecoveryRecordUpdate[field] === undefined) {
@@ -526,6 +570,13 @@ export class TerminalRecoveryRegistry {
       }
 
       Object.assign(updatedTerminalRecoveryRecord, { [field]: terminalRecoveryRecordUpdate[field] });
+    }
+
+    if (terminalRecoveryRecordUpdate.retired === true) {
+      delete updatedTerminalRecoveryRecord.ownerId;
+      delete updatedTerminalRecoveryRecord.ownerBindingId;
+      delete updatedTerminalRecoveryRecord.ownerProcessId;
+      delete updatedTerminalRecoveryRecord.terminalProcessId;
     }
 
     if (!getIsRecoveryRecord(updatedTerminalRecoveryRecord)) {
@@ -628,7 +679,10 @@ function getIsRecoveryRecord(value: unknown): value is TerminalRecoveryRecord {
     (terminalRecoveryRecord.ownerBindingId === undefined || getIsRecoveryField(terminalRecoveryRecord.ownerBindingId)) &&
     (terminalRecoveryRecord.ownerProcessId === undefined || getIsProcessId(terminalRecoveryRecord.ownerProcessId)) &&
     (terminalRecoveryRecord.terminalProcessId === undefined || getIsProcessId(terminalRecoveryRecord.terminalProcessId)) &&
-    (terminalRecoveryRecord.retired === undefined || typeof terminalRecoveryRecord.retired === "boolean");
+    (terminalRecoveryRecord.retired === undefined || typeof terminalRecoveryRecord.retired === "boolean") &&
+    (terminalRecoveryRecord.closeReason === undefined || terminalRecoveryRecord.closeReason === "user" || terminalRecoveryRecord.closeReason === "shutdown") &&
+    (terminalRecoveryRecord.persistence === undefined || terminalRecoveryRecord.persistence === "disabled" ||
+      terminalRecoveryRecord.persistence === "reconnect" || terminalRecoveryRecord.persistence === "revive");
 }
 
 function getIsRecoveryField(value: unknown): value is string {

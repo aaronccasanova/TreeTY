@@ -156,6 +156,139 @@ nodeTest.test("cancelling an unresolved restart skips Explorer sync", async () =
   assert.equal(fixture.allowedNodeIds.size, 0);
 });
 
+nodeTest.test("deactivation disposes once and waits for every configured host cleanup", async () => {
+  const fixture = createFixture();
+  const otherFixture = createFixture();
+  let finishCleanup;
+  const cleanup = new Promise(resolve => { finishCleanup = resolve; });
+  let didDeactivate = false;
+
+  fixture.controller.workspaceModels.push({ kind: "unconfigured" }, otherFixture.workspaceModel);
+  fixture.controller.vscodeTerminalHosts.add(otherFixture.workspaceModel.vscodeTerminalHost);
+  fixture.workspaceModel.vscodeTerminalHost.flushSessionCleanup = async () => {
+    fixture.calls.push("flush");
+    await cleanup;
+  };
+  otherFixture.workspaceModel.vscodeTerminalHost.flushSessionCleanup = async () => {
+    otherFixture.calls.push("flush");
+  };
+
+  const deactivation = fixture.controller.deactivate();
+
+  assert.equal(fixture.controller.deactivate(), deactivation);
+  void deactivation.then(() => { didDeactivate = true; });
+  fixture.controller.dispose();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(didDeactivate, false);
+  assert.deepEqual(fixture.calls, ["dispose engine", "dispose subscriptions", "dispose emitter", "flush"]);
+  assert.deepEqual(otherFixture.calls, ["dispose engine", "flush"]);
+
+  finishCleanup();
+  await deactivation;
+  assert.equal(didDeactivate, true);
+});
+
+nodeTest.test("deactivation flushes after subscription disposal and waits for other hosts before reporting errors", async () => {
+  const fixture = createFixture();
+  const otherFixture = createFixture();
+  let finishCleanup;
+  const cleanup = new Promise(resolve => { finishCleanup = resolve; });
+  let didReject = false;
+
+  fixture.controller.workspaceModels.push(otherFixture.workspaceModel);
+  fixture.controller.vscodeTerminalHosts.add(otherFixture.workspaceModel.vscodeTerminalHost);
+  fixture.workspaceModel.vscodeTerminalHost.flushSessionCleanup = async () => {
+    fixture.calls.push("flush");
+    throw new Error("cleanup failed");
+  };
+  otherFixture.workspaceModel.vscodeTerminalHost.flushSessionCleanup = async () => {
+    otherFixture.calls.push("flush");
+    await cleanup;
+  };
+  fixture.controller.dispose();
+
+  const deactivation = fixture.controller.deactivate();
+
+  void deactivation.catch(() => { didReject = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(didReject, false);
+  assert.deepEqual(otherFixture.calls, ["dispose engine", "flush"]);
+
+  finishCleanup();
+  await assert.rejects(deactivation, error => {
+    assert.ok(error instanceof AggregateError);
+    assert.match(String(error.errors[0]), /cleanup failed/);
+
+    return true;
+  });
+  assert.equal(fixture.calls.filter(call => call === "dispose engine").length, 1);
+});
+
+nodeTest.test("deactivation stops a workspace load paused before host creation and skips queued reloads", async () => {
+  const fixture = createFixture();
+  let finishReading;
+  let didRead = false;
+  let loadedWorkspaceModel;
+  const fileRead = new Promise(resolve => { finishReading = resolve; });
+
+  fixture.vscode.workspace = { fs: { readFile: async () => { didRead = true; return await fileRead; } } };
+  const workspaceModelLocation = {
+    id: "loading", configFileUri: { fsPath: "/tmp/tree.json" }, workspaceDirUri: { fsPath: "/tmp" },
+  };
+  const workspaceLoad = fixture.controller.queueWorkspaceOperation(async () => {
+    loadedWorkspaceModel = await fixture.controller.loadWorkspaceModel(workspaceModelLocation);
+  });
+  const queuedReload = fixture.controller.queueWorkspaceOperation(async () => { fixture.calls.push("unexpected reload"); });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(didRead, true);
+
+  let didDeactivate = false;
+  const deactivation = fixture.controller.deactivate().then(() => { didDeactivate = true; });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(didDeactivate, false);
+  finishReading(new TextEncoder().encode("{}"));
+  await Promise.all([workspaceLoad, queuedReload, deactivation]);
+
+  assert.equal(loadedWorkspaceModel.kind, "unconfigured");
+  assert.equal(fixture.calls.includes("unexpected reload"), false);
+  await fixture.controller.queueWorkspaceOperation(async () => { fixture.calls.push("unexpected post-disposal work"); });
+  assert.equal(fixture.calls.includes("unexpected post-disposal work"), false);
+});
+
+nodeTest.test("deactivation disposes and flushes loading and retiring hosts outside installed models", async () => {
+  const fixture = createFixture();
+  let finishCleanup;
+  const cleanup = new Promise(resolve => { finishCleanup = resolve; });
+  const loadingHost = {
+    dispose() { fixture.calls.push("dispose loading host"); },
+    async flushSessionCleanup() { fixture.calls.push("flush loading host"); await cleanup; },
+  };
+  const retiringHost = {
+    dispose() { fixture.calls.push("dispose retiring host"); },
+    async flushSessionCleanup() { fixture.calls.push("flush retiring host"); await cleanup; },
+  };
+
+  fixture.controller.vscodeTerminalHosts.add(loadingHost);
+  fixture.controller.vscodeTerminalHosts.add(retiringHost);
+  fixture.controller.disposeTerminalHost(retiringHost);
+
+  let didDeactivate = false;
+  const deactivation = fixture.controller.deactivate().then(() => { didDeactivate = true; });
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(didDeactivate, false);
+  assert.ok(fixture.calls.includes("dispose loading host"));
+  assert.ok(fixture.calls.includes("flush loading host"));
+  assert.ok(fixture.controller.vscodeTerminalHosts.has(retiringHost));
+
+  finishCleanup();
+  await deactivation;
+  assert.equal(fixture.controller.vscodeTerminalHosts.has(retiringHost), false);
+});
+
 function createFixture(recoveryCanForget = true) {
   const fixture = {
     calls: [],
@@ -164,6 +297,7 @@ function createFixture(recoveryCanForget = true) {
     allowedNodeIds: new Set(),
   };
   const vscode = {
+    workspace: {},
     window: {
       showWarningMessage: async (...warningArguments) => {
         fixture.calls.push("warning");
@@ -196,6 +330,8 @@ function createFixture(recoveryCanForget = true) {
     id: "workspace",
     resolvedTreeConfig: { version: 1, workspaceDirPath: "/workspace", tree: [treeNode] },
     vscodeTerminalHost: {
+      dispose() {},
+      async flushSessionCleanup() {},
       allowNextSessionCreation(nodeId) {
         fixture.calls.push("allow");
         fixture.allowedNodeIds.add(nodeId);
@@ -206,6 +342,7 @@ function createFixture(recoveryCanForget = true) {
       },
     },
     treeTYEngine: {
+      dispose() { fixture.calls.push("dispose engine"); },
       async openTerminal(nodeId) {
         fixture.calls.push("open");
 
@@ -225,6 +362,10 @@ function createFixture(recoveryCanForget = true) {
   const controller = Object.create(controllerModule.exports.TreeTYController.prototype);
 
   controller.workspaceModels = [workspaceModel];
+  controller.vscodeTerminalHosts = new Set([workspaceModel.vscodeTerminalHost]);
+  controller.workspaceReloadPromise = Promise.resolve();
+  controller.vscodeDisposables = [{ dispose() { fixture.calls.push("dispose subscriptions"); } }];
+  controller.workspaceModelChangeEmitter = { dispose() { fixture.calls.push("dispose emitter"); } };
   controller.setTerminalAttention = async () => { fixture.calls.push("attention"); };
   controller.syncExplorerDirectory = async () => { fixture.calls.push("sync"); };
 

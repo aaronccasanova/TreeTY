@@ -12,6 +12,7 @@ import {
 } from "./terminal-recovery";
 import type {
   TerminalRecoveryRecord,
+  TerminalRecoveryRecordUpdate,
   TerminalRecoveryStorage,
 } from "./terminal-recovery";
 
@@ -112,6 +113,10 @@ nodeTest.test("rejects malformed records, mismatched tokens, and unrelated stora
     { ...terminalRecoveryRecord, ownerBindingId: "" },
     { ...terminalRecoveryRecord, ownerBindingId: "invalid\nidentity" },
     { ...terminalRecoveryRecord, ownerBindingId: 42 },
+    { ...terminalRecoveryRecord, closeReason: "unknown" },
+    { ...terminalRecoveryRecord, closeReason: 42 },
+    { ...terminalRecoveryRecord, persistence: "always" },
+    { ...terminalRecoveryRecord, persistence: false },
     ...["configFilePath", "workspaceId", "hostId", "sessionId", "nodeId"].flatMap((field) => [
       { ...terminalRecoveryRecord, [field]: undefined },
       { ...terminalRecoveryRecord, [field]: "" },
@@ -421,7 +426,7 @@ nodeTest.test("retirement preserves title identity and atomic updates remove own
 
   const retiredTerminalRecoveryRecord = await registry.runWithNodeLock(terminalRecoveryRecord, () => registry.updateRecord(
     terminalRecoveryRecord.token, {
-      retired: true, ownerId: undefined, ownerBindingId: undefined, ownerProcessId: undefined, terminalProcessId: 42,
+      retired: true, terminalProcessId: 42,
     },
   ));
 
@@ -430,6 +435,7 @@ nodeTest.test("retirement preserves title identity and atomic updates remove own
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerId"), false);
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerBindingId"), false);
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerProcessId"), false);
+  assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "terminalProcessId"), false);
   assert.equal(retiredTerminalRecoveryRecord.token, terminalRecoveryRecord.token);
   await otherRegistry.refreshRecord(terminalRecoveryRecord.token);
   assert.deepEqual(otherRegistry.getRecord(terminalRecoveryRecord.token), retiredTerminalRecoveryRecord);
@@ -459,10 +465,97 @@ nodeTest.test("liveness can veto replacement but dead or missing processes remai
   const runningTerminalRecoveryRecord = { ...otherWindowTerminalRecoveryRecord, ownerId: undefined, ownerProcessId: undefined, terminalProcessId: 42 };
 
   assert.equal(registry.getRecordLiveness(runningTerminalRecoveryRecord), "running");
+  assert.equal(registry.getRecordLiveness({ ...runningTerminalRecoveryRecord, retired: true }), "unknown");
+  assert.equal(registry.getRecordLiveness({ ...ownedTerminalRecoveryRecord, retired: true }), "owned");
+  assert.equal(registry.getRecordLiveness({ ...otherWindowTerminalRecoveryRecord, retired: true }), "other-window");
   liveProcessIds.clear();
   assert.equal(registry.getRecordLiveness(otherWindowTerminalRecoveryRecord), "unknown");
   assert.equal(registry.getRecordLiveness(runningTerminalRecoveryRecord), "unknown");
   assert.ok(registry.getRecord(otherWindowTerminalRecoveryRecord.token));
+});
+
+nodeTest.test("retires only positively closed records without a live owner and retains native token identities", async () => {
+  const fixture = createFixture();
+  const registry = new TerminalRecoveryRegistry(fixture.storage, "host", {
+    getProcessIsAlive: (processId) => processId === 42,
+  });
+  const closedSessionCases: {
+    sessionId: string;
+    update: TerminalRecoveryRecordUpdate;
+    shouldRetire: boolean;
+  }[] = [
+    { sessionId: "user-dead", update: { closeReason: "user", terminalProcessId: 43 }, shouldRetire: false },
+    { sessionId: "user-alive", update: { closeReason: "user", terminalProcessId: 42 }, shouldRetire: false },
+    { sessionId: "user-missing", update: { closeReason: "user" }, shouldRetire: false },
+    { sessionId: "disabled-alive", update: { closeReason: "shutdown", persistence: "disabled", terminalProcessId: 42 }, shouldRetire: true },
+    { sessionId: "disabled-missing", update: { closeReason: "shutdown", persistence: "disabled" }, shouldRetire: true },
+    { sessionId: "reconnect-dead", update: { closeReason: "shutdown", persistence: "reconnect", terminalProcessId: 43 }, shouldRetire: true },
+    { sessionId: "reconnect-alive", update: { closeReason: "shutdown", persistence: "reconnect", terminalProcessId: 42 }, shouldRetire: false },
+    { sessionId: "reconnect-missing", update: { closeReason: "shutdown", persistence: "reconnect" }, shouldRetire: false },
+    { sessionId: "revive-dead", update: { closeReason: "shutdown", persistence: "revive", terminalProcessId: 43 }, shouldRetire: false },
+    { sessionId: "unknown-dead", update: { terminalProcessId: 43 }, shouldRetire: false },
+    { sessionId: "owned-disabled", update: { closeReason: "shutdown", persistence: "disabled", ownerId: registry.ownerId }, shouldRetire: false },
+    { sessionId: "foreign-owned-disabled", update: { closeReason: "shutdown", persistence: "disabled", ownerId: "other-owner", ownerProcessId: 42 }, shouldRetire: false },
+    { sessionId: "dead-owner-disabled", update: { closeReason: "shutdown", persistence: "disabled", ownerId: "other-owner", ownerProcessId: 43 }, shouldRetire: true },
+  ];
+
+  await registry.runWithNodeLock(createTarget(), async () => {
+    for (const closedSessionCase of closedSessionCases) {
+      const terminalRecoveryRecord = await registry.createRecord({ ...createTarget(), sessionId: closedSessionCase.sessionId });
+
+      await registry.updateRecord(terminalRecoveryRecord.token, {
+        ownerId: undefined, ownerBindingId: undefined, ownerProcessId: undefined, ...closedSessionCase.update,
+      });
+    }
+  });
+
+  const otherNodeTerminalRecoveryRecord = await registry.createRecord({ ...createTarget(), nodeId: "other-node" });
+
+  await registry.runWithNodeLock(otherNodeTerminalRecoveryRecord, () => registry.updateRecord(
+    otherNodeTerminalRecoveryRecord.token, { ownerId: undefined, ownerProcessId: undefined, closeReason: "user", terminalProcessId: 43 },
+  ));
+
+  const retiredTerminalRecoveryRecords = await registry.runWithNodeLock(createTarget(), () =>
+    registry.retireClosedRecordsForNode(createTarget()),
+  );
+
+  assert.deepEqual(
+    retiredTerminalRecoveryRecords.map((terminalRecoveryRecord) => terminalRecoveryRecord.sessionId).sort(),
+    closedSessionCases.filter((closedSessionCase) => closedSessionCase.shouldRetire).map((closedSessionCase) => closedSessionCase.sessionId).sort(),
+  );
+  assert.deepEqual(
+    registry.getRecordsForNode(createTarget()).filter((terminalRecoveryRecord) => !terminalRecoveryRecord.retired).map((terminalRecoveryRecord) => terminalRecoveryRecord.sessionId).sort(),
+    closedSessionCases.filter((closedSessionCase) => !closedSessionCase.shouldRetire).map((closedSessionCase) => closedSessionCase.sessionId).sort(),
+  );
+  assert.ok(registry.getRecord(otherNodeTerminalRecoveryRecord.token));
+
+  for (const retiredTerminalRecoveryRecord of retiredTerminalRecoveryRecords) {
+    assert.deepEqual(registry.getRecord(retiredTerminalRecoveryRecord.token), retiredTerminalRecoveryRecord);
+    assert.equal(retiredTerminalRecoveryRecord.terminalProcessId, undefined);
+    assert.equal(retiredTerminalRecoveryRecord.ownerProcessId, undefined);
+  }
+
+  assert.deepEqual(await registry.runWithNodeLock(createTarget(), () =>
+    registry.retireClosedRecordsForNode(createTarget()),
+  ), []);
+});
+
+nodeTest.test("updates and clears close policy fields without changing retained identity", async () => {
+  const fixture = createFixture();
+  const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+
+  const closedTerminalRecoveryRecord = await fixture.registry.runWithNodeLock(terminalRecoveryRecord, () => fixture.registry.updateRecord(
+    terminalRecoveryRecord.token, { closeReason: "shutdown", persistence: "revive" },
+  ));
+
+  assert.equal(closedTerminalRecoveryRecord?.closeReason, "shutdown");
+  assert.equal(closedTerminalRecoveryRecord?.persistence, "revive");
+
+  const claimedTerminalRecoveryRecord = await fixture.registry.runWithNodeLock(terminalRecoveryRecord, () => fixture.registry.updateRecord(
+    terminalRecoveryRecord.token, { closeReason: undefined, persistence: undefined },
+  ));
+
+  assert.deepEqual(claimedTerminalRecoveryRecord, terminalRecoveryRecord);
 });
 
 nodeTest.test("unavailable coordination preserves read access and rejects launch reservations", async () => {

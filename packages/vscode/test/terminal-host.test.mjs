@@ -743,33 +743,42 @@ nodeTest.test("concurrent launches in independent windows create one terminal fo
   assert.equal(firstFixture.registry.getRecordsForNode({ configFilePath: "/tmp/tree.json", nodeId: "first" }).length, 1);
 });
 
-nodeTest.test("confirmation cannot replace a foreign owner or a known running terminal process", async (testContext) => {
-  for (const ownership of ["foreign window", "running process"]) {
-    const storage = createStorage();
-    const ownerFixture = createFixture({ storage, terminals: [] });
-    testContext.after(() => ownerFixture.host.dispose());
-    const recoveryRecord = await ownerFixture.registry.createRecord({
-      configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "existing-session", nodeId: "first",
-    });
+nodeTest.test("confirmation cannot replace a foreign owner", async (testContext) => {
+  const storage = createStorage();
+  const ownerFixture = createFixture({ storage, terminals: [] });
+  testContext.after(() => ownerFixture.host.dispose());
+  const recoveryRecord = await ownerFixture.registry.createRecord({
+    configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "existing-session", nodeId: "first",
+  });
+  const fixture = createFixture({ storage, terminals: [], registryOptions: { getProcessIsAlive: () => true } });
+  testContext.after(() => fixture.host.dispose());
+  fixture.host.allowNextSessionCreation("first");
 
-    if (ownership === "running process") {
-      await ownerFixture.registry.updateRecord(recoveryRecord.token, {
-        ownerId: undefined, ownerProcessId: undefined, terminalProcessId: 123456,
-      });
-    }
+  await assert.rejects(
+    fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
+    error => error.canForget === false && /another VS Code window/.test(error.message),
+  );
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.notEqual(fixture.registry.getRecord(recoveryRecord.token).retired, true);
+});
 
-    const fixture = createFixture({ storage, terminals: [], registryOptions: { getProcessIsAlive: () => true } });
-    testContext.after(() => fixture.host.dispose());
-    fixture.host.allowNextSessionCreation("first");
+nodeTest.test("a saved running process without an active window owner allows explicit forgetting", async (testContext) => {
+  const fixture = createFixture({ terminals: [], registryOptions: { getProcessIsAlive: () => true } });
+  testContext.after(() => fixture.host.dispose());
+  const recoveryRecord = await fixture.registry.createRecord({
+    configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "existing-session", nodeId: "first",
+  });
+  await fixture.registry.updateRecord(recoveryRecord.token, {
+    ownerId: undefined, ownerProcessId: undefined, terminalProcessId: 123456,
+  });
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
 
-    await assert.rejects(
-      fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
-      error => error.canForget === false && (ownership === "foreign window"
-        ? /another VS Code window/.test(error.message) : /running or starting terminal/.test(error.message)),
-    );
-    assert.equal(fixture.createdTerminals.length, 0);
-    assert.notEqual(fixture.registry.getRecord(recoveryRecord.token).retired, true);
-  }
+  await assert.rejects(fixture.host.createSession(terminalLaunchRequest), error => error.canForget === true);
+  fixture.host.allowNextSessionCreation("first");
+  await fixture.host.createSession(terminalLaunchRequest);
+
+  assert.equal(fixture.createdTerminals.length, 1);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, true);
 });
 
 nodeTest.test("a retired token restored without another live owner is recovered instead of launching again", async (testContext) => {
@@ -1028,6 +1037,339 @@ nodeTest.test("late registration after an ambiguous close clears old state witho
   }
 });
 
+nodeTest.test("a native user close with a confirmed dead process requires explicit forgetting before reopening", async (testContext) => {
+  const terminalProcessId = 123456;
+  let terminalProcessIsAlive = true;
+  const fixture = createFixture({
+    terminals: [],
+    terminalProcessId,
+    registryOptions: { getProcessIsAlive: processId => processId !== terminalProcessId || terminalProcessIsAlive },
+  });
+  testContext.after(() => fixture.host.dispose());
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+  const originalSession = await fixture.host.createSession(terminalLaunchRequest);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fixture.registry.getRecord(fixture.recordAtCreation.token).terminalProcessId, terminalProcessId);
+
+  fixture.close(fixture.createdTerminals[0], fixture.vscode.TerminalExitReason.User);
+  await new Promise(resolve => setImmediate(resolve));
+  terminalProcessIsAlive = false;
+
+  await assert.rejects(fixture.host.createSession(terminalLaunchRequest), error => error.canForget === true);
+  fixture.host.allowNextSessionCreation("first");
+  const reopenedSession = await fixture.host.createSession(terminalLaunchRequest);
+
+  assert.notEqual(reopenedSession.id, originalSession.id);
+  assert.equal(fixture.createdTerminals.length, 2);
+});
+
+nodeTest.test("a native user close with a live PID and no owner allows explicit forgetting", async (testContext) => {
+  const fixture = createFixture({
+    terminals: [], terminalProcessId: 123456, registryOptions: { getProcessIsAlive: () => true },
+  });
+  testContext.after(() => fixture.host.dispose());
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+  await fixture.host.createSession(terminalLaunchRequest);
+  const recoveryRecord = fixture.recordAtCreation;
+  await new Promise(resolve => setImmediate(resolve));
+  fixture.close(fixture.createdTerminals[0], fixture.vscode.TerminalExitReason.User);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerId, undefined);
+  await assert.rejects(fixture.host.createSession(terminalLaunchRequest), error => error.canForget === true);
+  fixture.host.allowNextSessionCreation("first");
+  await fixture.host.createSession(terminalLaunchRequest);
+
+  assert.equal(fixture.createdTerminals.length, 2);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, true);
+});
+
+nodeTest.test("a transferred session keeps its active window ownership even when the recorded PID appears dead", async (testContext) => {
+  const storage = createStorage();
+  const terminalProcessId = 123456;
+  let terminalProcessIsAlive = true;
+  const registryOptions = { getProcessIsAlive: processId => processId !== terminalProcessId || terminalProcessIsAlive };
+  const fixture = createFixture({ storage, terminals: [], terminalProcessId, registryOptions });
+  testContext.after(() => fixture.host.dispose());
+  const terminalLaunchRequest = { nodeId: "first", name: "first", cwd: "/tmp", env: {} };
+  const originalSession = await fixture.host.createSession(terminalLaunchRequest);
+  const terminal = fixture.createdTerminals[0];
+  await new Promise(resolve => setImmediate(resolve));
+  fixture.close(terminal, fixture.vscode.TerminalExitReason.User);
+  await new Promise(resolve => setImmediate(resolve));
+  const receivingFixture = createFixture({
+    storage, registryOptions, terminals: [createTerminal({ name: terminal.name, env: {} })],
+  });
+  testContext.after(() => receivingFixture.host.dispose());
+
+  assert.deepEqual(await receivingFixture.host.getSessions(), [originalSession]);
+  terminalProcessIsAlive = false;
+  fixture.host.allowNextSessionCreation("first");
+
+  await assert.rejects(
+    fixture.host.createSession(terminalLaunchRequest),
+    error => error.canForget === false && /another VS Code window/.test(error.message),
+  );
+  assert.equal(fixture.createdTerminals.length, 1);
+  assert.equal(receivingFixture.createdTerminals.length, 0);
+});
+
+nodeTest.test("shutdown reopening respects the originating window's persistence settings and known process state", async (testContext) => {
+  const scenarios = [
+    { name: "persistence disabled", source: { enablePersistentSessions: false }, destination: { enablePersistentSessions: false }, processId: 123456, shouldReopen: true },
+    { name: "source disabled and destination default", source: { enablePersistentSessions: false }, destination: {}, processId: 123456, shouldReopen: true },
+    { name: "revival disabled and process dead", source: { persistentSessionReviveProcess: "never" }, destination: {}, processId: 123456, shouldReopen: true },
+    { name: "default persistence and process dead", source: {}, destination: {}, processId: 123456, shouldReopen: false },
+    { name: "source default and destination disabled", source: {}, destination: { enablePersistentSessions: false }, processId: 123456, shouldReopen: false },
+    { name: "revival disabled without a recorded PID", source: { persistentSessionReviveProcess: "never" }, destination: { persistentSessionReviveProcess: "never" }, shouldReopen: false },
+  ];
+
+  for (const scenario of scenarios) {
+    await testContext.test(scenario.name, async (scenarioContext) => {
+      const storage = createStorage();
+      let terminalProcessIsAlive = true;
+      const registryOptions = { getProcessIsAlive: processId => processId !== scenario.processId || terminalProcessIsAlive };
+      const fixture = createFixture({
+        storage, registryOptions, terminals: [], terminalProcessId: scenario.processId,
+        configuration: Object.fromEntries(Object.entries(scenario.source).map(([name, value]) => [`terminal.integrated.${name}`, value])),
+      });
+      scenarioContext.after(() => fixture.host.dispose());
+      await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+      await new Promise(resolve => setImmediate(resolve));
+      fixture.close(fixture.createdTerminals[0], fixture.vscode.TerminalExitReason.Shutdown);
+      await new Promise(resolve => setImmediate(resolve));
+      terminalProcessIsAlive = false;
+      fixture.host.dispose();
+      const reopenedFixture = createFixture({
+        storage, registryOptions, terminals: [],
+        configuration: Object.fromEntries(Object.entries(scenario.destination).map(([name, value]) => [`terminal.integrated.${name}`, value])),
+      });
+      reopenedFixture.resolvedTreeConfig.tree[0].restartPolicy = "onOpen";
+      const treeTYEngine = new engineModule.exports.TreeTYEngine(reopenedFixture.resolvedTreeConfig, reopenedFixture.host);
+      scenarioContext.after(() => treeTYEngine.dispose());
+
+      await treeTYEngine.start();
+
+      assert.equal(reopenedFixture.createdTerminals.length, scenario.shouldReopen ? 1 : 0, scenario.name);
+      assert.equal(Boolean(treeTYEngine.getTerminalSessionState("first").hostSessionId), scenario.shouldReopen, scenario.name);
+    });
+  }
+});
+
+nodeTest.test("a terminal restored during shutdown retirement keeps its identity and prevents a replacement launch", { timeout: 2_000 }, async (testContext) => {
+  const fixture = createFixture({ terminals: [] });
+  testContext.after(() => fixture.host.dispose());
+  const recoveryRecord = await fixture.registry.createRecord({
+    configFilePath: "/tmp/tree.json", workspaceId: "workspace", sessionId: "previous-session", nodeId: "first",
+  });
+  await fixture.registry.updateRecord(recoveryRecord.token, {
+    ownerId: undefined, ownerProcessId: undefined, closeReason: "shutdown", persistence: "disabled",
+  });
+  const recoveryKey = fixture.storage.keys().find(key => fixture.storage.get(key)?.token === recoveryRecord.token);
+  const retirementStarted = createDeferred();
+  const retirement = createDeferred();
+  testContext.after(() => retirement.resolve());
+  const updateStorage = fixture.storage.update.bind(fixture.storage);
+  let retirementPaused = false;
+  fixture.storage.update = async (key, value) => {
+    if (key === recoveryKey && (value === undefined || value.retired) && !retirementPaused) {
+      retirementPaused = true;
+      retirementStarted.resolve();
+      await retirement.promise;
+    }
+
+    await updateStorage(key, value);
+  };
+  const sessionCreations = Promise.allSettled([
+    fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} }),
+  ]);
+  await retirementStarted.promise;
+  const restoredTerminal = createTerminal({ name: `TreeTY: first [treety:${recoveryRecord.token}]`, env: {} });
+  fixture.terminals.push(restoredTerminal);
+  fixture.events.open(restoredTerminal);
+  retirement.resolve();
+  const [sessionCreation] = await sessionCreations;
+
+  if (sessionCreation.status === "fulfilled") {
+    assert.equal(sessionCreation.value.id, recoveryRecord.sessionId);
+  } else {
+    assert.equal(sessionCreation.reason.canForget, false);
+  }
+
+  assert.equal(fixture.createdTerminals.length, 0);
+  assert.ok(fixture.registry.getRecord(recoveryRecord.token));
+  assert.deepEqual(await fixture.host.getSessions(), [{ id: recoveryRecord.sessionId, nodeId: "first" }]);
+  assert.equal(fixture.registry.getRecord(recoveryRecord.token).retired, false);
+});
+
+nodeTest.test("disposal flush waits for a pending launch registration and removes its reservation", { timeout: 2_000 }, async (testContext) => {
+  const fixture = createFixture({ terminals: [] });
+  const registrationStarted = createDeferred();
+  const registration = createDeferred();
+  const persistedSessionIds = new Set();
+  testContext.after(async () => {
+    registration.resolve();
+    fixture.host.dispose();
+    await fixture.host.flushSessionCleanup();
+  });
+  fixture.core.registerTreeNodeSession = async (_config, _nodeId, sessionId) => {
+    fixture.registeredSessions.push(sessionId);
+    registrationStarted.resolve();
+    await registration.promise;
+    persistedSessionIds.add(sessionId);
+
+    return { version: 1, nodes: {} };
+  };
+  fixture.core.clearTreeNodeSession = async (_config, _nodeId, sessionId) => {
+    fixture.clearedSessions.push(sessionId);
+    persistedSessionIds.delete(sessionId);
+
+    return { version: 1, nodes: {} };
+  };
+  const sessionCreation = fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+  const rejectedSessionCreation = assert.rejects(sessionCreation, /disposed before launch/);
+  await registrationStarted.promise;
+  fixture.host.dispose();
+  let cleanupFlushed = false;
+  const cleanupFlush = fixture.host.flushSessionCleanup().then(() => { cleanupFlushed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(cleanupFlushed, false);
+  assert.equal(fixture.registry.getRecordsForNode({ configFilePath: "/tmp/tree.json", nodeId: "first" }).length, 1);
+  registration.resolve();
+  await cleanupFlush;
+  await rejectedSessionCreation;
+
+  assert.deepEqual(fixture.clearedSessions, fixture.registeredSessions);
+  assert.deepEqual([...persistedSessionIds], []);
+  assert.deepEqual(fixture.registry.getRecordsForNode({ configFilePath: "/tmp/tree.json", nodeId: "first" }), []);
+  assert.equal(fixture.createdTerminals.length, 0);
+});
+
+nodeTest.test("disposal flush waits for native close cleanup to persist", { timeout: 2_000 }, async (testContext) => {
+  for (const closeReason of ["User", "Shutdown", "Process"]) {
+    await testContext.test(closeReason, async (scenarioContext) => {
+      const fixture = createFixture({ terminals: [], configuration: { "terminal.integrated.enablePersistentSessions": false } });
+      const cleanupStarted = createDeferred();
+      const cleanup = createDeferred();
+      scenarioContext.after(async () => {
+        cleanup.resolve();
+        fixture.host.dispose();
+        await fixture.host.flushSessionCleanup();
+      });
+      const hostedTerminalSession = await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+      const recoveryRecord = fixture.recordAtCreation;
+      const updateStorage = fixture.storage.update.bind(fixture.storage);
+      fixture.storage.update = async (key, value) => {
+        cleanupStarted.resolve();
+        await cleanup.promise;
+        await updateStorage(key, value);
+      };
+
+      fixture.close(fixture.createdTerminals[0], fixture.vscode.TerminalExitReason[closeReason]);
+      fixture.host.dispose();
+      let cleanupFlushed = false;
+      const cleanupFlush = fixture.host.flushSessionCleanup().then(() => { cleanupFlushed = true; });
+      await cleanupStarted.promise;
+      await new Promise(resolve => setImmediate(resolve));
+
+      assert.equal(cleanupFlushed, false);
+      assert.equal(fixture.registry.getRecord(recoveryRecord.token).ownerId, fixture.registry.ownerId);
+      cleanup.resolve();
+      await cleanupFlush;
+
+      assert.deepEqual(fixture.clearedSessions, [hostedTerminalSession.id]);
+
+      if (closeReason === "Process") {
+        assert.equal(fixture.registry.getRecord(recoveryRecord.token), undefined);
+
+        return;
+      }
+
+      const retainedRecoveryRecord = fixture.registry.getRecord(recoveryRecord.token);
+      assert.equal(retainedRecoveryRecord.ownerId, undefined);
+      assert.equal(retainedRecoveryRecord.ownerBindingId, undefined);
+      assert.equal(retainedRecoveryRecord.ownerProcessId, undefined);
+      assert.equal(retainedRecoveryRecord.closeReason, closeReason.toLowerCase());
+      assert.equal(retainedRecoveryRecord.persistence, closeReason === "Shutdown" ? "disabled" : undefined);
+    });
+  }
+});
+
+nodeTest.test("disposal flush releases a live terminal's owner once without closing it", { timeout: 2_000 }, async (testContext) => {
+  const fixture = createFixture({ terminals: [], terminalProcessId: 123456 });
+  const cleanupStarted = createDeferred();
+  const cleanup = createDeferred();
+  testContext.after(async () => {
+    cleanup.resolve();
+    fixture.host.dispose();
+    await fixture.host.flushSessionCleanup();
+  });
+  await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  const recoveryRecord = fixture.recordAtCreation;
+  const terminal = fixture.createdTerminals[0];
+  const updateStorage = fixture.storage.update.bind(fixture.storage);
+  let cleanupWrites = 0;
+  fixture.storage.update = async (key, value) => {
+    cleanupWrites += 1;
+    cleanupStarted.resolve();
+    await cleanup.promise;
+    await updateStorage(key, value);
+  };
+
+  fixture.host.dispose();
+  fixture.host.dispose();
+  let cleanupFlushed = false;
+  const cleanupFlush = fixture.host.flushSessionCleanup().then(() => { cleanupFlushed = true; });
+  await cleanupStarted.promise;
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(cleanupFlushed, false);
+  cleanup.resolve();
+  await cleanupFlush;
+
+  const retainedRecoveryRecord = fixture.registry.getRecord(recoveryRecord.token);
+  assert.equal(cleanupWrites, 1);
+  assert.equal(retainedRecoveryRecord.ownerId, undefined);
+  assert.equal(retainedRecoveryRecord.ownerBindingId, undefined);
+  assert.equal(retainedRecoveryRecord.ownerProcessId, undefined);
+  assert.equal(retainedRecoveryRecord.terminalProcessId, 123456);
+  assert.deepEqual(fixture.clearedSessions, []);
+  assert.equal(terminal.wasDisposed, false);
+  assert.deepEqual(fixture.terminals, [terminal]);
+});
+
+nodeTest.test("disposal flush reports failed close cleanup and settles without an unhandled rejection", { timeout: 2_000 }, async (testContext) => {
+  const fixture = createFixture({ terminals: [] });
+  testContext.after(async () => {
+    fixture.host.dispose();
+    await fixture.host.flushSessionCleanup();
+  });
+  const hostedTerminalSession = await fixture.host.createSession({ nodeId: "first", name: "first", cwd: "/tmp", env: {} });
+  const stateError = new Error("Could not clear session state");
+  const storageError = new Error("Could not release session owner");
+  const reportError = testContext.mock.method(console, "error", () => {});
+  fixture.core.clearTreeNodeSession = async (_config, _nodeId, sessionId) => {
+    fixture.clearedSessions.push(sessionId);
+
+    throw stateError;
+  };
+  fixture.storage.update = async () => { throw storageError; };
+
+  fixture.close(fixture.createdTerminals[0], fixture.vscode.TerminalExitReason.User);
+  fixture.host.dispose();
+  await fixture.host.flushSessionCleanup();
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(fixture.clearedSessions, [hostedTerminalSession.id]);
+  assert.equal(reportError.mock.callCount(), 1);
+  const cleanupError = reportError.mock.calls[0].arguments[1];
+  assert.equal(cleanupError instanceof AggregateError, true);
+  assert.deepEqual(cleanupError.errors, [stateError, storageError]);
+  await fixture.host.flushSessionCleanup();
+});
+
 function createFixture(options = {}) {
   const events = {};
   const registeredSessions = [];
@@ -1076,6 +1418,11 @@ function createFixture(options = {}) {
       fire() {}
       dispose() {}
     },
+    workspace: {
+      getConfiguration: section => ({
+        get: (name, defaultValue) => options.configuration?.[`${section}.${name}`] ?? defaultValue,
+      }),
+    },
     window: {
       terminals,
       onDidOpenTerminal: callback => { events.open = callback; return { dispose() {} }; },
@@ -1118,6 +1465,7 @@ function createFixture(options = {}) {
 
   vscode.window.createTerminal = terminalOptions => {
     const terminal = createTerminal(terminalOptions);
+    terminal.processId = Promise.resolve(options.terminalProcessId);
     const titleMatch = /\[treety:([A-Za-z0-9_-]{22})\]$/.exec(terminal.name);
     fixture.recordAtCreation = titleMatch ? registry.getRecord(titleMatch[1]) : undefined;
     terminal.dispose = () => {
