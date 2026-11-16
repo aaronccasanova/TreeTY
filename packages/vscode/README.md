@@ -18,7 +18,9 @@ Windows users can follow the [manual build steps in the repository README](https
 
 The command installs locked dependencies, builds the core and extension, creates a timestamped VSIX, and force-installs it locally. Rerun it after pulling changes or editing the checkout. For an artifact without installation, run `pnpm install --frozen-lockfile` once, then `pnpm package:snapshot`.
 
-Run "Developer: Reload Window" after installation, then create new terminals. The extension provides the matching `treety` CLI in new integrated terminals, including terminals created outside TreeTY. Its CLI is bundled from the same checkout, so you don't need a global `@treety/cli` installation. Node.js 22 or newer must remain available on `PATH`. Existing terminals keep their old environment and need to be recreated to use the new build.
+Run "Developer: Reload Window" after installation. The extension provides its bundled `treety` CLI in new and restored integrated terminals, including terminals created outside TreeTY. You don't need a global `@treety/cli` installation. Node.js 22 or newer must remain available on `PATH`. Recreate terminals opened before this persistent CLI was installed once so they receive its stable path. Later reloads, full restarts, and updates preserve CLI access.
+
+TreeTY stores the bundled CLI and its launchers under `cli/` in extension global storage. A persistent environment contribution adds `cli/bin` to terminal `PATH`. Each activation atomically refreshes the self-contained bundle, so restored terminals can use the previous copy before activation, even after the old extension directory is removed. The contribution stays cached during shutdown. Windows that share this storage use the most recently activated build's CLI copy. Use separate VS Code user-data directories for development hosts running incompatible TreeTY builds. Updating the CLI doesn't change a terminal's launch-time `TREETY_*` identity or metadata.
 
 You can disable auto-update for TreeTY in VS Code's Extensions view to keep Marketplace updates from replacing a local snapshot. Snapshot filenames include a timestamp, while the embedded extension version stays unchanged.
 
@@ -62,7 +64,7 @@ A shell command lasting at least five seconds marks the terminal for attention o
 
 Activity is fenced by the terminal runtime session, reporter identity, and current link metadata. Unlinking, stopping, and restarting invalidate the relevant signal without clearing attention. A liveness check runs every five seconds only for registered reporters to recover when a reporting process exits without unregistering. There is no frame-by-frame animation timer.
 
-Use matching versions of the VS Code extension, bundled CLI, and any activity-reporting integrations. Older CLI versions can discard the new runtime fields when rewriting `state.json`. Recreate existing terminals after updating so they use the matching bundled CLI. Attention remains local shared state, while activity is scoped separately to each live terminal instance, including multiple VS Code windows.
+Use matching versions of the VS Code extension, bundled CLI, and any activity-reporting integrations. Older CLI versions can discard the new runtime fields when rewriting `state.json`. Reload after updating so TreeTY refreshes the stored CLI used by existing terminals with the stable path. Attention remains local shared state, while activity is scoped separately to each live terminal instance, including multiple VS Code windows.
 
 ## Find a group or terminal
 
