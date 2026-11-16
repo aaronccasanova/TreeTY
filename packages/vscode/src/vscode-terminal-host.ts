@@ -343,8 +343,12 @@ export class VscodeTerminalHost implements TerminalHost {
 
     this.disposed = true;
 
-    for (const terminalMetadata of this.metadataByTerminal.values()) {
-      void this.trackSessionOperation(this.releaseSessionOwnership(terminalMetadata).catch(reportActivityError));
+    for (const [terminal, terminalMetadata] of this.metadataByTerminal) {
+      const sessionCleanup = terminal.exitStatus !== undefined
+        ? this.finishClosedSession(terminal, terminalMetadata, this.closingTerminals.has(terminal))
+        : this.releaseSessionOwnership(terminalMetadata);
+
+      void this.trackSessionOperation(sessionCleanup.catch(reportActivityError));
     }
 
     for (const vscodeDisposable of this.vscodeDisposables) {

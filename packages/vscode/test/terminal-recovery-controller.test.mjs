@@ -187,6 +187,8 @@ nodeTest.test("deactivation disposes once and waits for every configured host cl
   finishCleanup();
   await deactivation;
   assert.equal(didDeactivate, true);
+  assert.equal(fixture.calls.at(-1), "shutdown recovery");
+  assert.equal(fixture.calls.filter(call => call === "shutdown recovery").length, 1);
 });
 
 nodeTest.test("deactivation flushes after subscription disposal and waits for other hosts before reporting errors", async () => {
@@ -223,6 +225,7 @@ nodeTest.test("deactivation flushes after subscription disposal and waits for ot
     return true;
   });
   assert.equal(fixture.calls.filter(call => call === "dispose engine").length, 1);
+  assert.equal(fixture.calls.at(-1), "shutdown recovery");
 });
 
 nodeTest.test("deactivation stops a workspace load paused before host creation and skips queued reloads", async () => {
@@ -364,6 +367,7 @@ function createFixture(recoveryCanForget = true) {
   controller.workspaceModels = [workspaceModel];
   controller.vscodeTerminalHosts = new Set([workspaceModel.vscodeTerminalHost]);
   controller.workspaceReloadPromise = Promise.resolve();
+  controller.terminalRecovery = { async shutdown() { fixture.calls.push("shutdown recovery"); } };
   controller.vscodeDisposables = [{ dispose() { fixture.calls.push("dispose subscriptions"); } }];
   controller.workspaceModelChangeEmitter = { dispose() { fixture.calls.push("dispose emitter"); } };
   controller.setTerminalAttention = async () => { fixture.calls.push("attention"); };

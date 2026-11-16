@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict";
+import * as fileSystem from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,9 +17,72 @@ import type {
   TerminalRecoveryStorage,
 } from "./terminal-recovery";
 
+nodeTest.test("large record refreshes bound open files and only reread changed records", async (testContext) => {
+  const recoveryDirPath = await fs.mkdtemp(path.join(os.tmpdir(), "treety-recovery-"));
+
+  testContext.after(() => fs.rm(recoveryDirPath, { recursive: true, force: true }));
+
+  const storage = new TerminalRecoveryFileStorage(recoveryDirPath);
+  const terminalRecoveryKeys: string[] = [];
+
+  for (let recordIndex = 0; recordIndex < 128; recordIndex += 1) {
+    const token = recordIndex.toString().padStart(22, "0");
+    const terminalRecoveryKey = `treety.terminalRecovery.v1.${token}`;
+
+    terminalRecoveryKeys.push(terminalRecoveryKey);
+    await storage.update(terminalRecoveryKey, { sessionId: "original" });
+  }
+
+  const readFile = fileSystem.promises.readFile;
+  let pendingReads = 0;
+  let maximumPendingReads = 0;
+  let readCount = 0;
+
+  testContext.mock.method(fileSystem.promises, "readFile", async (...readFileArguments: Parameters<typeof fs.readFile>) => {
+    pendingReads += 1;
+    maximumPendingReads = Math.max(maximumPendingReads, pendingReads);
+    readCount += 1;
+
+    try {
+      assert.ok(pendingReads <= 16, "refresh exceeded the available file descriptor budget");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      return await Reflect.apply(readFile, fileSystem.promises, readFileArguments);
+    } finally {
+      pendingReads -= 1;
+    }
+  });
+
+  await storage.refresh();
+  assert.equal(storage.keys().length, 128);
+  assert.equal(readCount, 128);
+  assert.ok(maximumPendingReads > 1);
+  assert.equal(pendingReads, 0);
+
+  await storage.refresh();
+  assert.equal(readCount, 128);
+
+  const changedRecoveryFilePath = path.join(recoveryDirPath, `${"0".repeat(22)}.json`);
+  const changedRecoveryFileStat = await fs.stat(changedRecoveryFilePath);
+  const replacementFilePath = path.join(recoveryDirPath, "replacement.tmp");
+
+  await fs.writeFile(replacementFilePath, JSON.stringify({ sessionId: "replaced" }));
+  await fs.utimes(replacementFilePath, changedRecoveryFileStat.atime, changedRecoveryFileStat.mtime);
+  await fs.rename(replacementFilePath, changedRecoveryFilePath);
+  await storage.refresh();
+  assert.equal(readCount, 129);
+  assert.deepEqual(storage.get(terminalRecoveryKeys[0]!), { sessionId: "replaced" });
+
+  await fs.unlink(changedRecoveryFilePath);
+  await storage.refresh();
+  assert.equal(storage.keys().length, 127);
+  assert.equal(storage.get(terminalRecoveryKeys[0]!), undefined);
+  assert.equal(readCount, 129);
+});
+
 nodeTest.test("persists independent recovery records and retrieves only the exact host and tree scope", async () => {
   const fixture = createFixture();
-  const otherHostRegistry = new TerminalRecoveryRegistry(fixture.storage, "other-host");
+  const otherHostRegistry = createRegistry(fixture.storage, "other-host");
   const terminalRecoveryRecords = await Promise.all([
     fixture.registry.createRecord(createTarget()),
     fixture.registry.createRecord({ ...createTarget(), sessionId: "other-session" }),
@@ -39,7 +103,7 @@ nodeTest.test("persists independent recovery records and retrieves only the exac
   assert.equal(fixture.registry.getRecord(terminalRecoveryRecords[4]!.token), undefined);
   assert.deepEqual(otherHostRegistry.getRecords(createTarget()), [terminalRecoveryRecords[4]]);
 
-  const reloadedRegistry = new TerminalRecoveryRegistry(fixture.storage, "host");
+  const reloadedRegistry = createRegistry(fixture.storage, "host");
 
   assert.deepEqual(reloadedRegistry.getRecord(terminalRecoveryRecords[0]!.token), terminalRecoveryRecords[0]);
 });
@@ -113,6 +177,7 @@ nodeTest.test("rejects malformed records, mismatched tokens, and unrelated stora
     { ...terminalRecoveryRecord, ownerBindingId: "" },
     { ...terminalRecoveryRecord, ownerBindingId: "invalid\nidentity" },
     { ...terminalRecoveryRecord, ownerBindingId: 42 },
+    { ...terminalRecoveryRecord, ownerProtocol: "unknown" },
     { ...terminalRecoveryRecord, closeReason: "unknown" },
     { ...terminalRecoveryRecord, closeReason: 42 },
     { ...terminalRecoveryRecord, persistence: "always" },
@@ -139,7 +204,7 @@ nodeTest.test("rejects malformed records, mismatched tokens, and unrelated stora
 
 nodeTest.test("removes only a requested valid record on the current host", async () => {
   const fixture = createFixture();
-  const otherHostRegistry = new TerminalRecoveryRegistry(fixture.storage, "other-host");
+  const otherHostRegistry = createRegistry(fixture.storage, "other-host");
   const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
   const otherTerminalRecoveryRecord = await otherHostRegistry.createRecord(createTarget());
 
@@ -156,7 +221,7 @@ nodeTest.test("removes only a requested valid record on the current host", async
 nodeTest.test("rejects invalid creation identities before writing storage", async () => {
   const fixture = createFixture();
 
-  assert.throws(() => new TerminalRecoveryRegistry(fixture.storage, ""), /host identity/);
+  assert.throws(() => createRegistry(fixture.storage, ""), /host identity/);
   await assert.rejects(fixture.registry.createRecord({ ...createTarget(), sessionId: "" }), /valid tree and session identity/);
   assert.equal(fixture.storedRecordsByKey.size, 0);
 });
@@ -236,8 +301,8 @@ nodeTest.test("independent file storage instances retain concurrent records and 
   testContext.after(() => fs.rm(temporaryDirPath, { recursive: true, force: true }));
 
   const recoveryDirPath = path.join(temporaryDirPath, "records");
-  const firstRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
-  const secondRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const firstRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const secondRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
 
   await Promise.all([firstRegistry.refresh(true), secondRegistry.refresh(true)]);
   assert.deepEqual(firstRegistry.getRecords(createTarget()), []);
@@ -273,7 +338,7 @@ nodeTest.test("file refresh and local writes preserve their order without replac
 
   testContext.after(() => fs.rm(recoveryDirPath, { recursive: true, force: true }));
 
-  const registry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const registry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
   const refresh = registry.refresh();
   const terminalRecoveryRecord = await registry.createRecord(createTarget());
 
@@ -307,7 +372,7 @@ nodeTest.test("file storage preserves corrupt and occupied files and rejects pat
   await fs.writeFile(path.join(recoveryDirPath, "unrelated.json"), "unrelated");
 
   const storage = new TerminalRecoveryFileStorage(recoveryDirPath);
-  const registry = new TerminalRecoveryRegistry(storage, "host");
+  const registry = createRegistry(storage, "host");
 
   await registry.refresh();
   assert.equal(storage.keys().length, 2);
@@ -356,7 +421,7 @@ nodeTest.test("registry retries exclusive filesystem collisions and propagates u
 
   await fs.writeFile(blockedDirPath, "not a directory");
 
-  const registry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(blockedDirPath), "host");
+  const registry = createRegistry(new TerminalRecoveryFileStorage(blockedDirPath), "host");
 
   await assert.rejects(registry.refresh(), { code: "ENOTDIR" });
   await assert.rejects(registry.createRecord(createTarget()));
@@ -367,8 +432,8 @@ nodeTest.test("node locks serialize cross-window reservations for the same leaf"
 
   testContext.after(() => fs.rm(recoveryDirPath, { recursive: true, force: true }));
 
-  const firstRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
-  const secondRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const firstRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const secondRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
   const terminalRecoveryNodeScope = { configFilePath: createTarget().configFilePath, nodeId: "shell" };
   const reservations = await Promise.all([firstRegistry, secondRegistry].map((registry, index) =>
     registry.runWithNodeLock(terminalRecoveryNodeScope, async () => {
@@ -393,8 +458,8 @@ nodeTest.test("normal refresh coalesces and caches scans while forced and token 
 
   const storage = new TerminalRecoveryFileStorage(recoveryDirPath);
   const refreshMock = testContext.mock.method(storage, "refresh");
-  const registry = new TerminalRecoveryRegistry(storage, "host");
-  const otherRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const registry = createRegistry(storage, "host");
+  const otherRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
 
   await Promise.all([registry.refresh(), registry.refresh(), registry.refresh()]);
   await registry.refresh();
@@ -415,8 +480,8 @@ nodeTest.test("retirement preserves title identity and atomic updates remove own
 
   testContext.after(() => fs.rm(recoveryDirPath, { recursive: true, force: true }));
 
-  const registry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
-  const otherRegistry = new TerminalRecoveryRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const registry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
+  const otherRegistry = createRegistry(new TerminalRecoveryFileStorage(recoveryDirPath), "host");
   const terminalRecoveryRecord = await registry.createRecord(createTarget());
   const boundTerminalRecoveryRecord = await registry.runWithNodeLock(terminalRecoveryRecord, () => registry.updateRecord(
     terminalRecoveryRecord.token, { ownerBindingId: "host-binding" },
@@ -435,6 +500,7 @@ nodeTest.test("retirement preserves title identity and atomic updates remove own
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerId"), false);
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerBindingId"), false);
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerProcessId"), false);
+  assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "ownerProtocol"), false);
   assert.equal(Object.hasOwn(retiredTerminalRecoveryRecord, "terminalProcessId"), false);
   assert.equal(retiredTerminalRecoveryRecord.token, terminalRecoveryRecord.token);
   await otherRegistry.refreshRecord(terminalRecoveryRecord.token);
@@ -452,7 +518,7 @@ nodeTest.test("retirement preserves title identity and atomic updates remove own
 nodeTest.test("liveness can veto replacement but dead or missing processes remain unknown", async () => {
   const fixture = createFixture();
   const liveProcessIds = new Set<number>([process.pid, 42]);
-  const registry = new TerminalRecoveryRegistry(fixture.storage, "host", {
+  const registry = createRegistry(fixture.storage, "host", {
     getProcessIsAlive: (processId) => liveProcessIds.has(processId),
   });
   const ownedTerminalRecoveryRecord = await registry.createRecord(createTarget());
@@ -476,7 +542,7 @@ nodeTest.test("liveness can veto replacement but dead or missing processes remai
 
 nodeTest.test("retires only positively closed records without a live owner and retains native token identities", async () => {
   const fixture = createFixture();
-  const registry = new TerminalRecoveryRegistry(fixture.storage, "host", {
+  const registry = createRegistry(fixture.storage, "host", {
     getProcessIsAlive: (processId) => processId === 42,
   });
   const closedSessionCases: {
@@ -558,6 +624,88 @@ nodeTest.test("updates and clears close policy fields without changing retained 
   assert.deepEqual(claimedTerminalRecoveryRecord, terminalRecoveryRecord);
 });
 
+nodeTest.test("exact owners distinguish concurrent instances from a reused live PID without losing records", async () => {
+  const fixture = createFixture();
+  const otherRegistry = createRegistry(fixture.storage, "host", { getProcessIsAlive: () => true });
+  const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+  const otherTerminalRecoveryRecord = await otherRegistry.createRecord({ ...createTarget(), sessionId: "other-session" });
+
+  assert.equal(terminalRecoveryRecord.ownerProtocol, "ipc-v1");
+  assert.equal(terminalRecoveryRecord.ownerProcessId, otherTerminalRecoveryRecord.ownerProcessId);
+  await otherRegistry.refresh(true);
+  assert.equal(otherRegistry.getRecordLiveness(terminalRecoveryRecord), "other-window");
+  await fixture.registry.shutdown();
+  await otherRegistry.refresh(true);
+  assert.equal(otherRegistry.getRecordLiveness(terminalRecoveryRecord), "unknown");
+  assert.equal(otherRegistry.getRecordLiveness(otherTerminalRecoveryRecord), "owned");
+  assert.deepEqual(otherRegistry.getRecord(terminalRecoveryRecord.token), terminalRecoveryRecord);
+
+  const claimedTerminalRecoveryRecord = await otherRegistry.runWithNodeLock(terminalRecoveryRecord, () =>
+    otherRegistry.updateRecord(terminalRecoveryRecord.token, {
+      ownerId: otherRegistry.ownerId, ownerProcessId: otherRegistry.ownerProcessId,
+    }),
+  );
+
+  assert.equal(claimedTerminalRecoveryRecord?.ownerProtocol, "ipc-v1");
+  assert.equal(claimedTerminalRecoveryRecord?.ownerId, otherRegistry.ownerId);
+});
+
+nodeTest.test("owner probes fail closed, coalesce per owner, and retain legacy PID safeguards", async () => {
+  const fixture = createFixture();
+  const terminalRecoveryRecord = await fixture.registry.createRecord(createTarget());
+
+  await fixture.registry.createRecord({ ...createTarget(), sessionId: "another-session" });
+
+  let ownerProbeCount = 0;
+  const otherRegistry = createRegistry(fixture.storage, "host", {
+    getProcessIsAlive: () => true,
+    getOwnerLiveness: async () => {
+      ownerProbeCount += 1;
+
+      throw Object.assign(new Error("access denied"), { code: "EACCES" });
+    },
+  });
+
+  await otherRegistry.refresh(true);
+  assert.equal(ownerProbeCount, 1);
+  assert.equal(otherRegistry.getRecordLiveness(terminalRecoveryRecord), "other-window");
+
+  const absentOwnerRegistry = createRegistry(fixture.storage, "host", {
+    getProcessIsAlive: () => true,
+    getOwnerLiveness: async () => "dead",
+  });
+
+  await absentOwnerRegistry.refresh(true);
+  assert.equal(absentOwnerRegistry.getRecordLiveness(terminalRecoveryRecord), "unknown");
+  assert.equal(absentOwnerRegistry.getRecordLiveness({ ...terminalRecoveryRecord, ownerProtocol: undefined }), "other-window");
+});
+
+nodeTest.test("ownership is persisted only after the endpoint is ready and startup failure never writes a record", async () => {
+  const fixture = createFixture();
+  let startOwner: (() => void) | undefined;
+  const ownerStartup = new Promise<void>((resolve) => { startOwner = resolve; });
+  const registry = createRegistry(fixture.storage, "host", {
+    owner: { start: async () => ownerStartup, shutdown: async () => {} },
+  });
+  const terminalRecoveryRecordPromise = registry.createRecord(createTarget());
+
+  await Promise.resolve();
+  assert.equal(fixture.storage.keys().length, 0);
+  startOwner?.();
+  await terminalRecoveryRecordPromise;
+  assert.equal(fixture.storage.keys().length, 1);
+
+  const failedRegistry = createRegistry(fixture.storage, "host", {
+    owner: {
+      start: async () => { throw Object.assign(new Error("socket denied"), { code: "EACCES" }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await assert.rejects(failedRegistry.createRecord(createTarget()), /socket denied/);
+  assert.equal(fixture.storage.keys().length, 1);
+});
+
 nodeTest.test("unavailable coordination preserves read access and rejects launch reservations", async () => {
   const registry = TerminalRecoveryRegistry.createUnavailable("host", "Shared terminal storage is unavailable.");
 
@@ -568,6 +716,14 @@ nodeTest.test("unavailable coordination preserves read access and rejects launch
   await assert.rejects(registry.createRecord(createTarget()), /Shared terminal storage is unavailable/);
   await assert.rejects(registry.runWithNodeLock(createTarget(), async () => true), /Shared terminal storage is unavailable/);
 });
+
+function createRegistry(...options: ConstructorParameters<typeof TerminalRecoveryRegistry>): TerminalRecoveryRegistry {
+  const registry = new TerminalRecoveryRegistry(...options);
+
+  nodeTest.after(() => registry.shutdown());
+
+  return registry;
+}
 
 function createFixture() {
   const storedRecordsByKey = new Map<string, unknown>();
@@ -591,7 +747,7 @@ function createFixture() {
     },
   };
 
-  return { storedRecordsByKey, storage, registry: new TerminalRecoveryRegistry(storage, "host") };
+  return { storedRecordsByKey, storage, registry: createRegistry(storage, "host") };
 }
 
 function createTarget(): Omit<TerminalRecoveryRecord, "version" | "token" | "hostId"> {

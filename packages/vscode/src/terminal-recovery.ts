@@ -4,6 +4,9 @@ import * as path from "node:path";
 
 import { mutateDocumentFile } from "@treety/core";
 
+import { getTerminalRecoveryOwnerLiveness, TerminalRecoveryOwner } from "./terminal-recovery-owner";
+import type { TerminalRecoveryOwnerIdentity, TerminalRecoveryOwnerLiveness } from "./terminal-recovery-owner";
+
 export interface TerminalRecoveryScope {
   configFilePath: string;
   workspaceId: string;
@@ -18,6 +21,7 @@ export interface TerminalRecoveryRecord extends TerminalRecoveryScope {
   ownerId?: string;
   ownerBindingId?: string;
   ownerProcessId?: number;
+  ownerProtocol?: "ipc-v1";
   terminalProcessId?: number;
   retired?: boolean;
   closeReason?: "user" | "shutdown";
@@ -33,11 +37,13 @@ export type TerminalRecoveryRecordLiveness = "owned" | "other-window" | "running
 
 export type TerminalRecoveryRecordUpdate = Pick<
   TerminalRecoveryRecord,
-  "ownerId" | "ownerBindingId" | "ownerProcessId" | "terminalProcessId" | "retired" | "closeReason" | "persistence"
+  "ownerId" | "ownerBindingId" | "ownerProcessId" | "ownerProtocol" | "terminalProcessId" | "retired" | "closeReason" | "persistence"
 >;
 
 interface TerminalRecoveryRegistryOptions {
   getProcessIsAlive?: (processId: number) => boolean;
+  getOwnerLiveness?: (identity: TerminalRecoveryOwnerIdentity) => Promise<TerminalRecoveryOwnerLiveness>;
+  owner?: Pick<TerminalRecoveryOwner, "start" | "shutdown">;
   unavailableReason?: string;
 }
 
@@ -65,6 +71,8 @@ const nodeOperationsByStorage = new WeakMap<TerminalRecoveryStorage, Map<string,
 export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
   private storedRecordsByKey = new Map<string, unknown>();
 
+  private recordFingerprintsByKey = new Map<string, string>();
+
   private storageOperation: Promise<void> = Promise.resolve();
 
   public constructor(private readonly recoveryDirPath: string) {
@@ -91,49 +99,80 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 
         this.storedRecordsByKey = new Map();
+        this.recordFingerprintsByKey = new Map();
 
         return;
       }
 
       const storedRecordsByKey = new Map<string, unknown>();
+      const recordFingerprintsByKey = new Map<string, string>();
+      const recoveryEntryIterator = recoveryEntries.values();
 
-      await Promise.all(recoveryEntries.map(async (recoveryEntry) => {
-        if (!recoveryEntry.name.endsWith(".json")) return;
+      // Retained tokens can accumulate. Bound open files and reuse unchanged record contents.
+      const refreshResults = await Promise.allSettled(Array.from({ length: 16 }, async () => {
+        for (const recoveryEntry of recoveryEntryIterator) {
+          if (!recoveryEntry.name.endsWith(".json")) continue;
 
-        const token = recoveryEntry.name.slice(0, -".json".length);
+          const token = recoveryEntry.name.slice(0, -".json".length);
 
-        if (!terminalRecoveryTokenPattern.test(token)) return;
+          if (!terminalRecoveryTokenPattern.test(token)) continue;
 
-        const key = `${terminalRecoveryKeyPrefix}${token}`;
+          const key = `${terminalRecoveryKeyPrefix}${token}`;
 
-        // Preserve occupied names without following symlinks or reading directories.
-        if (!recoveryEntry.isFile()) {
-          storedRecordsByKey.set(key, undefined);
+          // Preserve occupied names without following symlinks or reading directories.
+          if (!recoveryEntry.isFile()) {
+            storedRecordsByKey.set(key, undefined);
 
-          return;
-        }
+            continue;
+          }
 
-        let recoveryFileContent: string;
+          try {
+            const recoveryFilePath = path.join(this.recoveryDirPath, recoveryEntry.name);
+            const recoveryFileStat = await fs.lstat(recoveryFilePath, { bigint: true });
 
-        try {
-          recoveryFileContent = await fs.readFile(
-            path.join(this.recoveryDirPath, recoveryEntry.name), "utf8",
-          );
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            if (!recoveryFileStat.isFile()) {
+              storedRecordsByKey.set(key, undefined);
 
-          return;
-        }
+              continue;
+            }
 
-        try {
-          storedRecordsByKey.set(key, JSON.parse(recoveryFileContent));
-        } catch {
-          // Invalid JSON still occupies its token and must never be overwritten.
-          storedRecordsByKey.set(key, undefined);
+            const recordFingerprint = [
+              recoveryFileStat.dev, recoveryFileStat.ino, recoveryFileStat.size,
+              recoveryFileStat.mtimeNs, recoveryFileStat.ctimeNs,
+            ].join(":");
+
+            recordFingerprintsByKey.set(key, recordFingerprint);
+
+            if (this.recordFingerprintsByKey.get(key) === recordFingerprint) {
+              storedRecordsByKey.set(key, this.storedRecordsByKey.get(key));
+
+              continue;
+            }
+
+            const recoveryFileContent = await fs.readFile(recoveryFilePath, "utf8");
+
+            try {
+              storedRecordsByKey.set(key, JSON.parse(recoveryFileContent));
+            } catch {
+              // Invalid JSON still occupies its token and must never be overwritten.
+              storedRecordsByKey.set(key, undefined);
+            }
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+            recordFingerprintsByKey.delete(key);
+          }
         }
       }));
 
+      const refreshErrors = refreshResults.flatMap((refreshResult) =>
+        refreshResult.status === "rejected" ? [refreshResult.reason] : [],
+      );
+
+      if (refreshErrors.length > 0) throw new AggregateError(refreshErrors, "Could not refresh terminal recovery records.");
+
       this.storedRecordsByKey = storedRecordsByKey;
+      this.recordFingerprintsByKey = recordFingerprintsByKey;
     });
   }
 
@@ -149,6 +188,8 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
     const recoveryFilePath = path.join(this.recoveryDirPath, `${token}.json`);
 
     await this.runStorageOperation(async () => {
+      this.recordFingerprintsByKey.delete(key);
+
       if (value === undefined) {
         try {
           await fs.unlink(recoveryFilePath);
@@ -173,6 +214,8 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
     const recoveryFilePath = this.getRecoveryFilePath(key);
 
     await this.runStorageOperation(async () => {
+      this.recordFingerprintsByKey.delete(key);
+
       try {
         const recoveryFileStat = await fs.lstat(recoveryFilePath);
 
@@ -205,6 +248,8 @@ export class TerminalRecoveryFileStorage implements TerminalRecoveryStorage {
     let didReplaceRecord = false;
 
     await this.runStorageOperation(async () => {
+      this.recordFingerprintsByKey.delete(key);
+
       try {
         const recoveryFileStat = await fs.lstat(recoveryFilePath);
 
@@ -296,6 +341,12 @@ export class TerminalRecoveryRegistry {
 
   private lastRefreshAt = Number.NEGATIVE_INFINITY;
 
+  private readonly owner: Pick<TerminalRecoveryOwner, "start" | "shutdown">;
+
+  private readonly ownerLivenessById = new Map<string, TerminalRecoveryOwnerLiveness>();
+
+  private readonly ownerProbesById = new Map<string, Promise<void>>();
+
   public constructor(
     private readonly storage: TerminalRecoveryStorage,
     private readonly hostId: string,
@@ -307,6 +358,7 @@ export class TerminalRecoveryRegistry {
 
     this.unavailableReason = options.unavailableReason;
     this.isAvailable = options.unavailableReason === undefined;
+    this.owner = options.owner ?? new TerminalRecoveryOwner({ hostId, ownerId: this.ownerId });
   }
 
   public static createUnavailable(hostId: string, message: string): TerminalRecoveryRegistry {
@@ -328,6 +380,7 @@ export class TerminalRecoveryRegistry {
 
     const registryRefresh = (async () => {
       await this.storage.refresh?.();
+      await this.refreshOwners();
       this.lastRefreshAt = Date.now();
     })();
 
@@ -345,11 +398,16 @@ export class TerminalRecoveryRegistry {
 
     if (this.storage.refreshRecord) {
       await this.storage.refreshRecord(`${terminalRecoveryKeyPrefix}${token}`);
+      await this.refreshOwner(this.getRecord(token));
 
       return;
     }
 
     await this.refresh(true);
+  }
+
+  public async shutdown(): Promise<void> {
+    await this.owner.shutdown();
   }
 
   public async runWithNodeLock<Result>(
@@ -388,6 +446,7 @@ export class TerminalRecoveryRegistry {
     terminalRecoveryTarget: TerminalRecoveryTarget,
   ): Promise<TerminalRecoveryRecord> {
     this.assertAvailable();
+    await this.owner.start();
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const token = crypto.randomBytes(16).toString("base64url");
@@ -398,6 +457,7 @@ export class TerminalRecoveryRegistry {
         hostId: this.hostId,
         ownerId: this.ownerId,
         ownerProcessId: this.ownerProcessId,
+        ownerProtocol: "ipc-v1",
       };
 
       if (!getIsRecoveryRecord(terminalRecoveryRecord)) {
@@ -495,7 +555,9 @@ export class TerminalRecoveryRegistry {
 
     const getProcessIsAlive = this.options.getProcessIsAlive ?? getProcessIsAliveOnHost;
 
-    if (terminalRecoveryRecord.ownerProcessId && getProcessIsAlive(terminalRecoveryRecord.ownerProcessId)) {
+    if (terminalRecoveryRecord.ownerProcessId && getProcessIsAlive(terminalRecoveryRecord.ownerProcessId) &&
+      (terminalRecoveryRecord.ownerProtocol !== "ipc-v1" || !terminalRecoveryRecord.ownerId ||
+        this.ownerLivenessById.get(terminalRecoveryRecord.ownerId) !== "dead")) {
       return "other-window";
     }
 
@@ -518,6 +580,8 @@ export class TerminalRecoveryRegistry {
     const getProcessIsAlive = this.options.getProcessIsAlive ?? getProcessIsAliveOnHost;
 
     for (const terminalRecoveryRecord of this.getRecordsForNode(terminalRecoveryNodeScope)) {
+      if (terminalRecoveryRecord.retired) continue;
+
       await this.refreshRecord(terminalRecoveryRecord.token);
 
       const currentTerminalRecoveryRecord = this.getRecord(terminalRecoveryRecord.token);
@@ -560,7 +624,7 @@ export class TerminalRecoveryRegistry {
 
     const updatedTerminalRecoveryRecord = { ...terminalRecoveryRecord };
 
-    for (const field of ["ownerId", "ownerBindingId", "ownerProcessId", "terminalProcessId", "retired", "closeReason", "persistence"] as const) {
+    for (const field of ["ownerId", "ownerBindingId", "ownerProcessId", "ownerProtocol", "terminalProcessId", "retired", "closeReason", "persistence"] as const) {
       if (!Object.hasOwn(terminalRecoveryRecordUpdate, field)) continue;
 
       if (terminalRecoveryRecordUpdate[field] === undefined) {
@@ -577,6 +641,16 @@ export class TerminalRecoveryRegistry {
       delete updatedTerminalRecoveryRecord.ownerBindingId;
       delete updatedTerminalRecoveryRecord.ownerProcessId;
       delete updatedTerminalRecoveryRecord.terminalProcessId;
+    }
+
+    if (!updatedTerminalRecoveryRecord.ownerId) {
+      delete updatedTerminalRecoveryRecord.ownerProtocol;
+    } else if (updatedTerminalRecoveryRecord.ownerId === this.ownerId) {
+      await this.owner.start();
+      updatedTerminalRecoveryRecord.ownerProtocol = "ipc-v1";
+    } else if (Object.hasOwn(terminalRecoveryRecordUpdate, "ownerId") &&
+      !Object.hasOwn(terminalRecoveryRecordUpdate, "ownerProtocol")) {
+      delete updatedTerminalRecoveryRecord.ownerProtocol;
     }
 
     if (!getIsRecoveryRecord(updatedTerminalRecoveryRecord)) {
@@ -648,6 +722,53 @@ export class TerminalRecoveryRegistry {
   private assertAvailable(): void {
     if (this.unavailableReason) throw new Error(this.unavailableReason);
   }
+
+  private async refreshOwners(): Promise<void> {
+    const recordsByOwnerId = new Map<string, TerminalRecoveryRecord>();
+
+    for (const recoveryKey of this.storage.keys()) {
+      if (!recoveryKey.startsWith(terminalRecoveryKeyPrefix)) continue;
+
+      const terminalRecoveryRecord = this.getRecord(recoveryKey.slice(terminalRecoveryKeyPrefix.length));
+
+      if (terminalRecoveryRecord?.ownerId && terminalRecoveryRecord.ownerProtocol === "ipc-v1") {
+        recordsByOwnerId.set(terminalRecoveryRecord.ownerId, terminalRecoveryRecord);
+      }
+    }
+
+    const ownerRecords = recordsByOwnerId.values();
+
+    await Promise.all(Array.from({ length: Math.min(16, recordsByOwnerId.size) }, async () => {
+      for (const terminalRecoveryRecord of ownerRecords) {
+        await this.refreshOwner(terminalRecoveryRecord);
+      }
+    }));
+  }
+
+  private async refreshOwner(terminalRecoveryRecord: TerminalRecoveryRecord | undefined): Promise<void> {
+    if (!terminalRecoveryRecord?.ownerId || terminalRecoveryRecord.ownerId === this.ownerId ||
+      terminalRecoveryRecord.ownerProtocol !== "ipc-v1") return;
+
+    const ownerId = terminalRecoveryRecord.ownerId;
+    const currentOwnerProbe = this.ownerProbesById.get(ownerId);
+
+    if (currentOwnerProbe) return await currentOwnerProbe;
+
+    const ownerProbe = (async () => {
+      const getOwnerLiveness = this.options.getOwnerLiveness ?? getTerminalRecoveryOwnerLiveness;
+      const ownerLiveness = await getOwnerLiveness({ hostId: this.hostId, ownerId }).catch(() => "unknown" as const);
+
+      this.ownerLivenessById.set(ownerId, ownerLiveness);
+    })();
+
+    this.ownerProbesById.set(ownerId, ownerProbe);
+
+    try {
+      await ownerProbe;
+    } finally {
+      if (this.ownerProbesById.get(ownerId) === ownerProbe) this.ownerProbesById.delete(ownerId);
+    }
+  }
 }
 
 export function buildTerminalTitle(name: string, token: string): string {
@@ -678,6 +799,7 @@ function getIsRecoveryRecord(value: unknown): value is TerminalRecoveryRecord {
     (terminalRecoveryRecord.ownerId === undefined || getIsRecoveryField(terminalRecoveryRecord.ownerId)) &&
     (terminalRecoveryRecord.ownerBindingId === undefined || getIsRecoveryField(terminalRecoveryRecord.ownerBindingId)) &&
     (terminalRecoveryRecord.ownerProcessId === undefined || getIsProcessId(terminalRecoveryRecord.ownerProcessId)) &&
+    (terminalRecoveryRecord.ownerProtocol === undefined || terminalRecoveryRecord.ownerProtocol === "ipc-v1") &&
     (terminalRecoveryRecord.terminalProcessId === undefined || getIsProcessId(terminalRecoveryRecord.terminalProcessId)) &&
     (terminalRecoveryRecord.retired === undefined || typeof terminalRecoveryRecord.retired === "boolean") &&
     (terminalRecoveryRecord.closeReason === undefined || terminalRecoveryRecord.closeReason === "user" || terminalRecoveryRecord.closeReason === "shutdown") &&

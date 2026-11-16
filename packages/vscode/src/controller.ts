@@ -775,7 +775,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       if (cleanupErrors.length > 0) {
         throw new AggregateError(cleanupErrors, "Could not finish terminal cleanup before deactivation.");
       }
-    });
+    }).finally(() => this.terminalRecovery.shutdown());
 
     return this.deactivationPromise;
   }
