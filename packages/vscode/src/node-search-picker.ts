@@ -42,7 +42,11 @@ export class NodeSearchPicker implements vscode.Disposable {
       quickPick.onDidAccept(() => this.acceptSelection()),
       quickPick.onDidHide(() => this.dispose()),
       this.options.workspaceModelSource.onDidChangeWorkspaceModels((workspaceModelChange) => {
-        if (workspaceModelChange.kind !== "tree" && workspaceModelChange.kind !== "workspace") return;
+        if (
+          workspaceModelChange.kind !== "tree" &&
+          workspaceModelChange.kind !== "workspace" &&
+          workspaceModelChange.kind !== "configuration"
+        ) return;
 
         this.refreshEntries();
       }),

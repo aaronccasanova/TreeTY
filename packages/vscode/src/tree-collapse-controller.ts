@@ -5,6 +5,7 @@ import type { TreeEntry, WorkspaceTreeEntry } from "./tree-provider";
 interface TreeCollapseControllerOptions {
   treeView: Pick<vscode.TreeView<TreeEntry>, "onDidCollapseElement" | "reveal">;
   collapseAll: () => PromiseLike<unknown>;
+  onDidCollapseAll?: () => PromiseLike<unknown>;
 }
 
 export class TreeCollapseController {
@@ -41,11 +42,13 @@ export class TreeCollapseController {
 
     try {
       // Native collapse events reflect the current UI, including restored state.
-      // They arrive before the command completes, so no expansion cache is needed.
+      // They arrive before the command completes and determine the progressive step.
       await this.options.collapseAll();
     } finally {
       collapseSubscription.dispose();
     }
+
+    await this.options.onDidCollapseAll?.();
 
     const hadExpandedRootGroup = [...collapsedRoots.keys()].some((workspaceId) =>
       collapsedGroupWorkspaceIds.has(workspaceId),

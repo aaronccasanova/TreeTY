@@ -30,6 +30,12 @@ import {
 } from "@treety/core";
 
 import {
+  getCommandDefinition,
+  getHelpContent,
+  parseCommandArguments,
+  ParsedCommandArguments,
+} from "./command-options";
+import {
   getFileExists,
   loadTreeConfig,
   mutateTreeConfigFile,
@@ -49,13 +55,6 @@ export interface RunCliOptions {
   output?: CliOutput;
 }
 
-interface ParsedCommandArguments {
-  commandArguments: string[];
-  flagNames: Set<string>;
-  optionValuesByName: Map<string, string[]>;
-  terminalCommandArguments: string[];
-}
-
 interface TreeConfigCommandContext {
   parsedCommandArguments: ParsedCommandArguments;
   runCliOptions: Required<RunCliOptions>;
@@ -63,39 +62,6 @@ interface TreeConfigCommandContext {
 }
 
 const cliPackageConfig = require("../package.json") as { version: string };
-
-const optionNameByAlias = new Map([
-  ["-c", "--config"],
-  ["-g", "--global"],
-  ["-h", "--help"],
-  ["-v", "--version"],
-  ["-y", "--yes"],
-]);
-
-const optionNamesWithValues = new Set([
-  "--activity-animation",
-  "--attention",
-  "--metadata-path",
-  "--reporter",
-  "--pid",
-  "--session",
-  "--config",
-  "--after",
-  "--before",
-  "--cwd",
-  "--env",
-  "--id",
-  "--if-node",
-  "--metadata",
-  "--node",
-  "--parent",
-  "--project-dir",
-  "--restart-policy",
-  "--shell",
-  "--shell-arg",
-  "--unset-env",
-  "--delete-env",
-]);
 
 export async function runCli(
   cliArguments: string[],
@@ -107,14 +73,22 @@ export async function runCli(
     const parsedCommandArguments = parseCommandArguments(cliArguments);
     const commandName = parsedCommandArguments.commandArguments[0];
 
-    if (commandName === "version" || hasFlag(parsedCommandArguments, "--version")) {
+    if (
+      (commandName === "version" || hasFlag(parsedCommandArguments, "--version")) &&
+      commandName !== "help" &&
+      !hasFlag(parsedCommandArguments, "--help")
+    ) {
       runCliOptions.output.writeOutput(cliPackageConfig.version);
 
       return 0;
     }
 
-    if (!commandName || commandName === "help" || hasFlag(parsedCommandArguments, "--help")) {
-      runCliOptions.output.writeOutput(getHelpContent());
+    if (commandName === undefined || commandName === "help" || hasFlag(parsedCommandArguments, "--help")) {
+      const helpCommandName = commandName === "help"
+        ? parsedCommandArguments.commandArguments[1]
+        : commandName;
+
+      runCliOptions.output.writeOutput(getHelpContent(cliPackageConfig.version, helpCommandName));
 
       return 0;
     }
@@ -209,11 +183,7 @@ export async function runCli(
 async function runInitCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--force",
-    "--global",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("init").optionNames);
   assertNoCommandArguments(context.parsedCommandArguments, 1, "init");
 
   if (
@@ -225,10 +195,10 @@ async function runInitCommand(
     );
   }
 
-  await writeTreeConfig(context.treeConfigFilePath, createEmptyTreeConfig());
-  context.runCliOptions.output.writeOutput(
-    `Initialized ${context.treeConfigFilePath}`,
-  );
+  const treeConfig = createEmptyTreeConfig();
+
+  await writeTreeConfig(context.treeConfigFilePath, treeConfig);
+  writeMutationOutput(context, `Initialized ${context.treeConfigFilePath}`, { config: treeConfig });
 
   return 0;
 }
@@ -236,11 +206,7 @@ async function runInitCommand(
 async function runListCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--json",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("list").optionNames);
   assertNoCommandArguments(context.parsedCommandArguments, 1, "list");
 
   const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
@@ -265,20 +231,7 @@ async function runListCommand(
 async function runAddCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--cwd",
-    "--env",
-    "--global",
-    "--id",
-    "--parent",
-    "--project-dir",
-    "--restart-policy",
-    "--shell",
-    "--shell-arg",
-    "--unset-env",
-    "--metadata",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("add").optionNames);
 
   const treeNodeKind = context.parsedCommandArguments.commandArguments[1];
   const treeNodeName = context.parsedCommandArguments.commandArguments[2];
@@ -312,7 +265,7 @@ async function runAddCommand(
   };
   let addedTreeNodeId = "";
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
+  const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
     const updatedTreeConfig =
       treeNodeKind === "group"
         ? addTreeGroup(treeConfig, treeNodeOptions)
@@ -326,8 +279,10 @@ async function runAddCommand(
     return updatedTreeConfig;
   });
 
-  context.runCliOptions.output.writeOutput(
+  writeMutationOutput(
+    context,
     `Added ${treeNodeKind} "${treeNodeName}" (${addedTreeNodeId}) to ${context.treeConfigFilePath}`,
+    { node: getTreeNode(treeConfig, addedTreeNodeId) },
   );
 
   return 0;
@@ -336,11 +291,7 @@ async function runAddCommand(
 async function runRenameCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--node",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("rename").optionNames);
 
   const renameArguments = context.parsedCommandArguments.commandArguments.slice(1);
   const explicitNodeId =
@@ -353,11 +304,13 @@ async function runRenameCommand(
 
   const nodeId = getTargetNodeId(context, explicitNodeId);
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+  const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
     renameTreeNode(treeConfig, nodeId, treeNodeName),
   );
-  context.runCliOptions.output.writeOutput(
+  writeMutationOutput(
+    context,
     `Renamed ${nodeId} to "${treeNodeName}" in ${context.treeConfigFilePath}`,
+    { node: getTreeNode(treeConfig, nodeId) },
   );
 
   return 0;
@@ -366,15 +319,11 @@ async function runRenameCommand(
 async function runShowCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--node",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("show").optionNames);
 
   const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
-  assertNoCommandArguments(context.parsedCommandArguments, explicitNodeId ? 2 : 1, "show");
+  assertNoCommandArguments(context.parsedCommandArguments, explicitNodeId !== undefined ? 2 : 1, "show");
 
   const nodeId = getTargetNodeId(context, explicitNodeId);
   const treeConfig = await loadTreeConfig(context.treeConfigFilePath);
@@ -394,35 +343,13 @@ async function runShowCommand(
 async function runConfigureCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--activity-animation",
-    "--clear-activity-animation",
-    "--clear-cwd",
-    "--clear-command",
-    "--clear-metadata",
-    "--clear-project-dir",
-    "--clear-restart-policy",
-    "--clear-shell",
-    "--config",
-    "--cwd",
-    "--delete-env",
-    "--env",
-    "--global",
-    "--if-node",
-    "--metadata",
-    "--node",
-    "--project-dir",
-    "--restart-policy",
-    "--shell",
-    "--shell-arg",
-    "--unset-env",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("configure").optionNames);
 
   const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
   assertNoCommandArguments(
     context.parsedCommandArguments,
-    explicitNodeId ? 2 : 1,
+    explicitNodeId !== undefined ? 2 : 1,
     "configure",
   );
 
@@ -446,7 +373,7 @@ async function runConfigureCommand(
     }
   }
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
+  const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
     if (expectedTreeNodeContent !== undefined) {
       const treeNode = getTreeNode(treeConfig, nodeId);
       const treeNodeSnapshot = treeNode
@@ -462,8 +389,10 @@ async function runConfigureCommand(
 
     return updateTreeNode(treeConfig, updateTreeNodeOptions);
   });
-  context.runCliOptions.output.writeOutput(
+  writeMutationOutput(
+    context,
     `Configured ${nodeId} in ${context.treeConfigFilePath}`,
+    { node: getTreeNode(treeConfig, nodeId) },
   );
 
   return 0;
@@ -472,11 +401,7 @@ async function runConfigureCommand(
 async function runMetadataCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--node",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("metadata").optionNames);
 
   const metadataCommandName =
     context.parsedCommandArguments.commandArguments[1];
@@ -516,15 +441,17 @@ async function runMetadataCommand(
     }
 
     const nodeId = getTargetNodeId(context, explicitNodeId);
-    await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+    const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
       updateTreeNode(treeConfig, {
         nodeId,
         metadata: parseMetadataContent(metadataContent),
         metadataAction: "replace",
       }),
     );
-    context.runCliOptions.output.writeOutput(
+    writeMutationOutput(
+      context,
       `Set metadata for ${nodeId} in ${context.treeConfigFilePath}`,
+      { node: getTreeNode(treeConfig, nodeId) },
     );
 
     return 0;
@@ -538,14 +465,16 @@ async function runMetadataCommand(
     }
 
     const nodeId = getTargetNodeId(context, explicitNodeId);
-    await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+    const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
       updateTreeNode(treeConfig, {
         nodeId,
         metadataAction: "remove",
       }),
     );
-    context.runCliOptions.output.writeOutput(
+    writeMutationOutput(
+      context,
       `Cleared metadata for ${nodeId} in ${context.treeConfigFilePath}`,
+      { node: getTreeNode(treeConfig, nodeId) },
     );
 
     return 0;
@@ -571,7 +500,7 @@ async function runMetadataCommand(
 
     const nodeId = getTargetNodeId(context, explicitNodeId);
 
-    await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+    const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
       setTreeNodeMetadataPath(
         treeConfig,
         nodeId,
@@ -579,8 +508,10 @@ async function runMetadataCommand(
         parseMetadataContent(metadataContent),
       ),
     );
-    context.runCliOptions.output.writeOutput(
+    writeMutationOutput(
+      context,
       `Set metadata path ${metadataPath} for ${nodeId} in ${context.treeConfigFilePath}`,
+      { node: getTreeNode(treeConfig, nodeId) },
     );
 
     return 0;
@@ -601,11 +532,13 @@ async function runMetadataCommand(
 
     const nodeId = getTargetNodeId(context, explicitNodeId);
 
-    await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+    const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
       clearTreeNodeMetadataPath(treeConfig, nodeId, metadataPath),
     );
-    context.runCliOptions.output.writeOutput(
+    writeMutationOutput(
+      context,
       `Cleared metadata path ${metadataPath} for ${nodeId} in ${context.treeConfigFilePath}`,
+      { node: getTreeNode(treeConfig, nodeId) },
     );
 
     return 0;
@@ -619,16 +552,7 @@ async function runMetadataCommand(
 async function runActivityCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--attention",
-    "--config",
-    "--global",
-    "--metadata-path",
-    "--node",
-    "--reporter",
-    "--pid",
-    "--session",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("activity").optionNames);
   assertNoCommandArguments(context.parsedCommandArguments, 2, "activity");
 
   if (context.parsedCommandArguments.terminalCommandArguments.length > 0) {
@@ -662,7 +586,7 @@ async function runActivityCommand(
 
   const nodeId = getTargetNodeId(context);
 
-  await setTreeNodeActivity(context.treeConfigFilePath, nodeId, {
+  const treeState = await setTreeNodeActivity(context.treeConfigFilePath, nodeId, {
     action,
     sessionId,
     reporterId,
@@ -670,9 +594,10 @@ async function runActivityCommand(
     metadataPath: getOptionValue(context.parsedCommandArguments, "--metadata-path"),
     needsAttention: attention === undefined ? undefined : attention === "set",
   });
-  context.runCliOptions.output.writeOutput(
-    `Updated activity for ${nodeId} in ${context.treeConfigFilePath}`,
-  );
+  writeMutationOutput(context, `Updated activity for ${nodeId} in ${context.treeConfigFilePath}`, {
+    nodeId,
+    state: Object.hasOwn(treeState.nodes, nodeId) ? treeState.nodes[nodeId] : {},
+  });
 
   return 0;
 }
@@ -680,11 +605,7 @@ async function runActivityCommand(
 async function runAttentionCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--node",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("attention").optionNames);
 
   const attentionCommandName =
     context.parsedCommandArguments.commandArguments[1];
@@ -696,26 +617,27 @@ async function runAttentionCommand(
 
   assertNoCommandArguments(
     context.parsedCommandArguments,
-    explicitNodeId ? 3 : 2,
+    explicitNodeId !== undefined ? 3 : 2,
     `attention ${attentionCommandName}`,
   );
 
   const nodeId = getTargetNodeId(context, explicitNodeId);
 
-  await setTreeNodeAttention(
+  const treeState = await setTreeNodeAttention(
     context.treeConfigFilePath,
     nodeId,
     attentionCommandName === "set",
   );
-  context.runCliOptions.output.writeOutput(
-    `${attentionCommandName === "set" ? "Set" : "Cleared"} attention for ${nodeId} in ${context.treeConfigFilePath}`,
-  );
+  writeMutationOutput(context, `${attentionCommandName === "set" ? "Set" : "Cleared"} attention for ${nodeId} in ${context.treeConfigFilePath}`, {
+    nodeId,
+    state: Object.hasOwn(treeState.nodes, nodeId) ? treeState.nodes[nodeId] : {},
+  });
 
   return 0;
 }
 
 function runUriCommand(context: TreeConfigCommandContext): number {
-  assertAllowedOptions(context.parsedCommandArguments, []);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("uri").optionNames);
   assertNoCommandArguments(context.parsedCommandArguments, 1, "uri");
 
   if (context.parsedCommandArguments.terminalCommandArguments.length > 0) {
@@ -739,10 +661,7 @@ function runUriCommand(context: TreeConfigCommandContext): number {
 async function runCurrentCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("current").optionNames);
   assertNoCommandArguments(context.parsedCommandArguments, 1, "current");
 
   const nodeId = getTargetNodeId(context);
@@ -782,21 +701,13 @@ async function runCurrentCommand(
 async function runMoveCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--after",
-    "--before",
-    "--config",
-    "--global",
-    "--node",
-    "--parent",
-    "--root",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("move").optionNames);
 
   const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
   assertNoCommandArguments(
     context.parsedCommandArguments,
-    explicitNodeId ? 2 : 1,
+    explicitNodeId !== undefined ? 2 : 1,
     "move",
   );
 
@@ -819,11 +730,13 @@ async function runMoveCommand(
     );
   }
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
+  const treeConfig = await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
     moveTreeNode(treeConfig, { nodeId, parentId, beforeId, afterId }),
   );
-  context.runCliOptions.output.writeOutput(
+  writeMutationOutput(
+    context,
     `Moved ${nodeId} in ${context.treeConfigFilePath}`,
+    { node: getTreeNode(treeConfig, nodeId) },
   );
 
   return 0;
@@ -832,18 +745,13 @@ async function runMoveCommand(
 async function runRemoveCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-    "--node",
-    "--yes",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("remove").optionNames);
 
   const explicitNodeId = context.parsedCommandArguments.commandArguments[1];
 
   assertNoCommandArguments(
     context.parsedCommandArguments,
-    explicitNodeId ? 2 : 1,
+    explicitNodeId !== undefined ? 2 : 1,
     "remove",
   );
 
@@ -855,12 +763,17 @@ async function runRemoveCommand(
     );
   }
 
-  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) =>
-    removeTreeNode(treeConfig, nodeId),
-  );
-  context.runCliOptions.output.writeOutput(
-    `Removed ${nodeId} from ${context.treeConfigFilePath}`,
-  );
+  let removedNodeIds: string[] = [];
+
+  await mutateTreeConfigFile(context.treeConfigFilePath, (treeConfig) => {
+    const updatedTreeConfig = removeTreeNode(treeConfig, nodeId);
+    const retainedNodeIds = new Set(getTreeNodeIds(updatedTreeConfig.tree));
+
+    removedNodeIds = getTreeNodeIds(treeConfig.tree).filter((treeNodeId) => !retainedNodeIds.has(treeNodeId));
+
+    return updatedTreeConfig;
+  });
+  writeMutationOutput(context, `Removed ${nodeId} from ${context.treeConfigFilePath}`, { removedNodeIds });
 
   return 0;
 }
@@ -868,10 +781,7 @@ async function runRemoveCommand(
 async function runConfigCommand(
   context: TreeConfigCommandContext,
 ): Promise<number> {
-  assertAllowedOptions(context.parsedCommandArguments, [
-    "--config",
-    "--global",
-  ]);
+  assertAllowedOptions(context.parsedCommandArguments, getCommandDefinition("config").optionNames);
 
   const configCommandName = context.parsedCommandArguments.commandArguments[1];
 
@@ -885,60 +795,21 @@ async function runConfigCommand(
   return 0;
 }
 
-function parseCommandArguments(cliArguments: string[]): ParsedCommandArguments {
-  const commandSeparatorIndex = cliArguments.indexOf("--");
-  const treeCommandArguments =
-    commandSeparatorIndex === -1
-      ? cliArguments
-      : cliArguments.slice(0, commandSeparatorIndex);
-  const terminalCommandArguments =
-    commandSeparatorIndex === -1
-      ? []
-      : cliArguments.slice(commandSeparatorIndex + 1);
-  const parsedCommandArguments: ParsedCommandArguments = {
-    commandArguments: [],
-    flagNames: new Set<string>(),
-    optionValuesByName: new Map<string, string[]>(),
-    terminalCommandArguments,
-  };
+function writeMutationOutput(
+  context: TreeConfigCommandContext,
+  message: string,
+  receipt: Record<string, unknown>,
+): void {
+  if (!hasFlag(context.parsedCommandArguments, "--json")) {
+    context.runCliOptions.output.writeOutput(message);
 
-  for (
-    let commandArgumentIndex = 0;
-    commandArgumentIndex < treeCommandArguments.length;
-    commandArgumentIndex += 1
-  ) {
-    const commandArgument = treeCommandArguments[commandArgumentIndex];
-
-    if (!commandArgument) continue;
-
-    const optionName = optionNameByAlias.get(commandArgument) ?? commandArgument;
-
-    if (!optionName.startsWith("-")) {
-      parsedCommandArguments.commandArguments.push(commandArgument);
-
-      continue;
-    }
-
-    if (!optionNamesWithValues.has(optionName)) {
-      parsedCommandArguments.flagNames.add(optionName);
-
-      continue;
-    }
-
-    const optionValue = treeCommandArguments[commandArgumentIndex + 1];
-
-    if (!optionValue) {
-      throw new Error(`Option ${optionName} requires a value.`);
-    }
-
-    const optionValues = parsedCommandArguments.optionValuesByName.get(optionName) ?? [];
-
-    optionValues.push(optionValue);
-    parsedCommandArguments.optionValuesByName.set(optionName, optionValues);
-    commandArgumentIndex += 1;
+    return;
   }
 
-  return parsedCommandArguments;
+  context.runCliOptions.output.writeOutput(JSON.stringify({
+    configFilePath: context.treeConfigFilePath,
+    ...receipt,
+  }, null, 2));
 }
 
 function getRunCliOptions(options: RunCliOptions): Required<RunCliOptions> {
@@ -1178,9 +1049,15 @@ function getTargetNodeId(
   context: TreeConfigCommandContext,
   explicitNodeId?: string,
 ): string {
+  const optionNodeId = getOptionValue(context.parsedCommandArguments, "--node");
+
+  if (explicitNodeId === "" || optionNodeId === "") {
+    throw new Error("A node ID cannot be empty.");
+  }
+
   const nodeId =
     explicitNodeId ??
-    getOptionValue(context.parsedCommandArguments, "--node") ??
+    optionNodeId ??
     context.runCliOptions.environment[treeTYNodeIdEnvironmentName];
 
   if (nodeId) return nodeId;
@@ -1333,82 +1210,6 @@ function getOptionValues(
   optionName: string,
 ): string[] {
   return parsedCommandArguments.optionValuesByName.get(optionName) ?? [];
-}
-
-function getHelpContent(): string {
-  return `TreeTY ${cliPackageConfig.version}
-
-Manage hierarchical terminal workspaces.
-
-Usage:
-  treety init [--global] [--force]
-  treety list [--json]
-  treety add group <name> [options]
-  treety add terminal <name> [options] [-- <command> [args...]]
-  treety show [node-id]
-  treety configure [node-id] [options]
-  treety rename [node-id] <name>
-  treety move [node-id] (--parent <group-id> | --root | --before <sibling-id> | --after <sibling-id>)
-  treety remove [node-id] --yes
-  treety metadata get [node-id]
-  treety metadata set [node-id] <json>
-  treety metadata clear [node-id]
-  treety metadata set-path [node-id] <json-pointer> <json>
-  treety metadata clear-path [node-id] <json-pointer>
-  treety attention set [node-id]
-  treety attention clear [node-id]
-  treety activity <register|busy|idle|unregister> --reporter <id> --pid <pid> [options]
-  treety current
-  treety uri
-  treety config path
-
-Node options:
-  --id <id>                    Set an explicit stable node ID
-  --parent <group-id>          Add the node beneath a group
-  --cwd <path>                 Set the node's inherited working directory
-  --project-dir <path>         Set the inherited project directory
-  --env <NAME=value>           Add an environment value (repeatable)
-  --unset-env <NAME>           Remove an inherited value (repeatable)
-  --metadata <json>            Set freeform JSON metadata
-  --shell <path>               Set a shell executable
-  --shell-arg <value>          Add a shell argument (repeatable)
-  --restart-policy <policy>    Use manual or onOpen
-
-Configure-only options:
-  --activity-animation <on|off> Set activity animation for a terminal
-  --clear-activity-animation   Restore the default activity animation
-  --if-node <json>             Configure only if the current node matches this snapshot
-  --clear-cwd                  Restore the inherited working directory
-  --clear-project-dir          Restore the inherited project directory
-  --delete-env <NAME>          Delete a node environment override
-  --clear-shell                Restore the inherited shell
-  --clear-restart-policy       Restore the inherited restart policy
-  --clear-metadata             Remove node metadata
-  --clear-command              Remove a terminal startup command
-  -- <command> [args...]       Set a terminal startup command
-
-Activity options:
-  --reporter <id>            Opaque identifier for the reporting integration instance
-  --pid <process-id>         PID of the process reporting work
-  --session <host-session-id>  Defaults to TREETY_SESSION_ID
-  --metadata-path <pointer>   Require node metadata at this JSON Pointer to equal reporter ID
-  --attention <set|clear>     Change attention atomically with register or idle
-  Register starts idle. Busy clears attention. Unregister preserves attention.
-
-Session URI:
-  treety uri prints TREETY_SESSION_URI unchanged without opening it.
-  The host must provide a URI for this live session. No target selectors are accepted.
-
-Target selection:
-  --node <node-id>             Target a node explicitly
-  TreeTY terminals infer the node and configuration from their environment.
-
-Config options:
-  -g, --global                 Use the global TreeTY configuration
-  -c, --config <path>          Use a specific configuration file
-
-Global configuration:
-  $XDG_CONFIG_HOME/treety/tree.json, or ~/.config/treety/tree.json`;
 }
 
 if (require.main === module) {

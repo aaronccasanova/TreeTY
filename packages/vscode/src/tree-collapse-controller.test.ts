@@ -164,6 +164,29 @@ nodeTest.test("root reveal failure propagates without blocking subsequent collap
   assert.equal(fixture.listeners.size, 0);
 });
 
+nodeTest.test("clears saved descendants after native collapse and before restoring roots", async () => {
+  const globalRoot = createWorkspaceTreeEntry("global");
+  const fixture = createFixture([[globalRoot, createGroupTreeEntry(globalRoot)], [globalRoot]]);
+  const operations: string[] = [];
+  const collapseAll = fixture.options.collapseAll;
+  const reveal = fixture.options.treeView.reveal;
+
+  fixture.options.collapseAll = async () => {
+    operations.push("native");
+    await collapseAll();
+  };
+  fixture.options.onDidCollapseAll = async () => { operations.push("persist"); };
+  fixture.options.treeView.reveal = async (...revealArguments) => {
+    operations.push("reveal");
+    await reveal(...revealArguments);
+  };
+
+  await fixture.treeCollapseController.collapseAll();
+  await fixture.treeCollapseController.collapseAll();
+
+  assert.deepEqual(operations, ["native", "persist", "reveal", "native", "persist"]);
+});
+
 function createFixture(collapseBatches: TreeEntry[][]) {
   const listeners = new Set<(event: vscode.TreeViewExpansionEvent<TreeEntry>) => unknown>();
   const disposedListeners: unknown[] = [];
@@ -176,6 +199,7 @@ function createFixture(collapseBatches: TreeEntry[][]) {
     for (const listener of listeners) listener({ element: treeEntry });
   };
   const options = {
+    onDidCollapseAll: async (): Promise<void> => {},
     treeView: {
       onDidCollapseElement: (listener: (event: vscode.TreeViewExpansionEvent<TreeEntry>) => unknown) => {
         listeners.add(listener);
