@@ -25,6 +25,7 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import type { TerminalIdentity, TerminalTarget } from "./public-api";
 import { TerminalActivityTracker } from "./terminal-activity";
 import type { TerminalActivity } from "./terminal-activity";
 import type { TerminalLinkManager } from "./terminal-links";
@@ -139,6 +140,42 @@ export class VscodeTerminalHost implements TerminalHost {
     }));
 
     return this.sessionDiscovery;
+  }
+
+  public async getTerminalIdentity(terminal: vscode.Terminal): Promise<TerminalIdentity | undefined> {
+    const hostedTerminalSessions = await this.getSessions();
+    const terminalMetadata = this.metadataByTerminal.get(terminal);
+
+    if (!terminalMetadata || this.terminalBySessionId.get(terminalMetadata.sessionId) !== terminal ||
+      !hostedTerminalSessions.some((session) => session.id === terminalMetadata.sessionId &&
+        session.nodeId === terminalMetadata.nodeId) || !this.getTerminalIsLive(terminal)) return undefined;
+
+    return {
+      configFile: this.configFilePath,
+      nodeId: terminalMetadata.nodeId,
+      sessionId: terminalMetadata.sessionId,
+    };
+  }
+
+  public async getTerminal(target: TerminalTarget): Promise<vscode.Terminal | undefined> {
+    if (target.configFile !== this.configFilePath) return undefined;
+
+    const hostedTerminalSessions = await this.getSessions();
+    const matchingSessions = hostedTerminalSessions.filter((session) =>
+      session.nodeId === target.nodeId && (target.sessionId === undefined || session.id === target.sessionId),
+    );
+    const session = matchingSessions[0];
+
+    if (matchingSessions.length !== 1 || !session) return undefined;
+
+    const terminal = this.terminalBySessionId.get(session.id);
+
+    return terminal && this.getTerminalIsLive(terminal) ? terminal : undefined;
+  }
+
+  private getTerminalIsLive(terminal: vscode.Terminal): boolean {
+    return !this.disposed && vscode.window.terminals.includes(terminal) &&
+      terminal.exitStatus === undefined && !this.closingTerminals.has(terminal);
   }
 
   public allowNextSessionCreation(nodeId: string): void {

@@ -7,6 +7,7 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import type { WorkspaceTreeChange } from "./get-workspace-tree-change";
 import type { VscodeTerminalHost } from "./vscode-terminal-host";
 
 export type TreeConfigSource = "global" | "workspace";
@@ -45,6 +46,7 @@ export type WorkspaceModel =
   | InvalidWorkspaceModel;
 
 export type WorkspaceModelChange =
+  | ({ kind: "configuration"; workspaceId: string } & WorkspaceTreeChange)
   | { kind: "attention"; workspaceId: string; nodeIds: readonly string[] }
   | { kind: "terminal"; workspaceId: string; nodeIds: readonly string[] }
   | { kind: "tree" }

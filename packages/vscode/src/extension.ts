@@ -2,6 +2,9 @@ import * as path from "node:path";
 
 import * as vscode from "vscode";
 
+import { createAsyncCommandHandler } from "./async-command";
+import { parseNodeCommandTarget } from "./node-command-target";
+import type { TreeTYApi } from "./public-api";
 import { showCommandError, TreeTYController } from "./controller";
 import { resolveNodeSearchEntry } from "./node-search";
 import { NodeSearchPicker } from "./node-search-picker";
@@ -17,7 +20,7 @@ let activeTreeTYController: TreeTYController | undefined;
 
 export async function activate(
   extensionContext: vscode.ExtensionContext,
-): Promise<void> {
+): Promise<TreeTYApi> {
   try {
     await configureTerminalEnvironment(extensionContext);
   } catch (error) {
@@ -67,7 +70,7 @@ export async function activate(
   );
   activeTreeTYController = treeTYController;
 
-  const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController);
+  const treeTYTreeProvider = new TreeTYTreeProvider(treeTYController, extensionContext.workspaceState);
   const treeTYTreeView: vscode.TreeView<TreeEntry> = vscode.window.createTreeView(
     "treety.terminals",
     { treeDataProvider: treeTYTreeProvider },
@@ -75,6 +78,7 @@ export async function activate(
 
   const treeCollapseController = new TreeCollapseController({
     treeView: treeTYTreeView,
+    onDidCollapseAll: () => treeTYTreeProvider.collapseAll(),
     collapseAll: () => vscode.commands.executeCommand(
       "workbench.actions.treeView.treety.terminals.collapseAll",
     ),
@@ -106,10 +110,27 @@ export async function activate(
     showError: showCommandError,
   });
 
+  function registerNodeCommand<Result>(
+    commandName: string,
+    commandHandler: (nodeTreeEntry: NodeTreeEntry, argument: unknown) => Promise<Result>,
+  ): vscode.Disposable {
+    return registerAsyncCommand(commandName, async (argument: unknown) => {
+      const nodeTreeEntry = await treeTYController.resolveCommandNodeEntry(argument);
+
+      return commandHandler(nodeTreeEntry, argument);
+    });
+  }
+
   extensionContext.subscriptions.push(
     treeTYController,
     treeTYTreeProvider,
     treeTYTreeView,
+    treeTYTreeView.onDidExpandElement(({ element }) => {
+      void treeTYTreeProvider.setExpanded(element, true).catch(showCommandError);
+    }),
+    treeTYTreeView.onDidCollapseElement(({ element }) => {
+      void treeTYTreeProvider.setExpanded(element, false).catch(showCommandError);
+    }),
     nodeSearchPicker,
     vscode.commands.registerCommand("treety.searchNodes", () => nodeSearchPicker.show()),
     vscode.window.registerFileDecorationProvider(treeTYTreeProvider),
@@ -140,66 +161,69 @@ export async function activate(
         getCommandTreeEntry(treeEntry, treeTYTreeView),
       ),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.renameNode",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.renameNode(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.configureNode",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.configureNode(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.moveNode",
       (nodeTreeEntry: NodeTreeEntry) => treeTYController.moveNode(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.showNodeActions",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.showNodeActions(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.deleteNode",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.deleteNode(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.openTerminal",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.openTerminal(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.copyTerminalLink",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.copyTerminalLink(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.restartTerminal",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.restartTerminal(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.restartGroupTerminals",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.restartGroupTerminals(nodeTreeEntry),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.stopTerminal",
-      (nodeTreeEntry: NodeTreeEntry) =>
-        treeTYController.stopTerminal(nodeTreeEntry),
+      (nodeTreeEntry: NodeTreeEntry, argument: unknown) =>
+        treeTYController.stopTerminal(nodeTreeEntry,
+          typeof argument === "object" && argument !== null && "nodeId" in argument
+            ? parseNodeCommandTarget(argument).confirm
+            : undefined),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.markTerminalAttention",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.setTerminalAttention(nodeTreeEntry, true),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.clearTerminalAttention",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.setTerminalAttention(nodeTreeEntry, false),
     ),
-    registerAsyncCommand(
+    registerNodeCommand(
       "treety.addDirectoryToWorkspace",
       (nodeTreeEntry: NodeTreeEntry) =>
         treeTYController.addNodeDirectoryToWorkspace(nodeTreeEntry),
@@ -229,6 +253,12 @@ export async function activate(
   );
 
   await startup;
+
+  return {
+    apiVersion: 1,
+    getTerminalIdentity: (terminal) => treeTYController.getTerminalIdentity(terminal),
+    getTerminal: (target) => treeTYController.getTerminal(target),
+  };
 }
 
 export async function deactivate(): Promise<void> {
@@ -248,16 +278,12 @@ function getCommandTreeEntry(
   return treeEntry ?? treeTYTreeView.selection[0];
 }
 
-function registerAsyncCommand<Arguments extends unknown[]>(
+function registerAsyncCommand<Arguments extends unknown[], Result>(
   commandName: string,
-  commandHandler: (...commandArguments: Arguments) => Promise<void>,
+  commandHandler: (...commandArguments: Arguments) => Promise<Result>,
 ): vscode.Disposable {
   return vscode.commands.registerCommand(
     commandName,
-    (...commandArguments: Arguments) => {
-      void commandHandler(...commandArguments).catch((error: unknown) =>
-        showCommandError(error),
-      );
-    },
+    createAsyncCommandHandler(commandHandler, showCommandError),
   );
 }

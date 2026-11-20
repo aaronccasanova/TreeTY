@@ -130,7 +130,8 @@ nodeTest.test("refreshes matching results for metadata changes but ignores statu
 
   assert.equal(quickPick.items.length, 0);
 
-  harness.setWorkspaceModels([createWorkspace([{ kind: "terminal", id: "tests", name: "Tests", metadata: { owner: "Platform" } }])]);
+  harness.setWorkspaceModels([createWorkspace([{ kind: "terminal", id: "tests", name: "Tests", metadata: { owner: "Platform" } }])], false);
+  harness.modelChanges.fire({ kind: "configuration", workspaceId: "personal", parentIds: [], nodeIds: ["tests"] });
 
   assert.equal(quickPick.items.length, 1);
 
