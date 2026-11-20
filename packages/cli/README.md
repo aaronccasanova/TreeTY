@@ -66,7 +66,7 @@ treety metadata set <node-id> '{"owner":"platform"}' --global
 treety metadata set <node-id> '{"owner":"platform"}' --config ../shared/tree.json
 ```
 
-Run `treety help` for the complete command reference.
+Run `treety help` for the command list, or `treety <command> --help` for its accepted options.
 
 New nodes receive opaque UUIDs unless `--id` supplies an explicit stable ID. Names remain freely renameable display values. IDs are unique within one config, so the complete persistent identity is the config file path plus node ID.
 
@@ -77,6 +77,33 @@ Tree and attention mutations use bounded cooperative locks and atomic replacemen
 Use `move --before <sibling-id>` or `move --after <sibling-id>` for explicit ordering. Use a command after `configure ... --` to set a terminal startup command, or `--clear-command` to remove it. `metadata set-path` and `metadata clear-path` apply targeted JSON Pointer changes. `attention set` and `attention clear` default to the current `TREETY_NODE_ID` inside a TreeTY terminal.
 
 When a script reads a node before deciding which settings to change, pass that complete node JSON from `treety show` as `configure --if-node <json>`. TreeTY compares the snapshot with the latest node while holding the configuration lock. If any node field changed, the entire configure operation fails without writing. Read the node again and reconsider the intended update before retrying. JSON property order does not matter, and changes to other nodes do not prevent the update.
+
+## Use the CLI from scripts
+
+Run `treety <command> --help` or `treety help <command>` for that command's usage and accepted options. `treety help` lists all commands.
+
+Quote node IDs supplied by shell variables. An explicitly empty ID fails instead of targeting the current terminal. Omitting the ID still selects `TREETY_NODE_ID` where the command supports terminal context. The shell removes an unquoted empty variable before TreeTY receives it, so quoting remains necessary.
+
+A value beginning with a dash requires the `=` form, for example `--shell-arg=-l` or `--node=-example`. Repeated `--env`, `--unset-env`, `--delete-env`, and `--shell-arg` options retain all values. Arguments after `--` belong to the terminal startup command and aren't interpreted as CLI options. Existing tree configuration validation still applies to the command.
+
+Every mutation command accepts `--json`. Without it, the existing human-readable messages remain unchanged. JSON receipts have these shapes:
+
+| Commands | Receipt |
+| --- | --- |
+| `init` | `{ "configFilePath": "...", "config": { ... } }` |
+| `add`, `rename`, `configure`, `move`, and `metadata` mutations | `{ "configFilePath": "...", "node": { ... } }` |
+| `remove` | `{ "configFilePath": "...", "removedNodeIds": ["..."] }` |
+| `attention` and `activity` | `{ "configFilePath": "...", "nodeId": "...", "state": { ... } }` |
+
+`node` is the stored node from that mutation, including a generated ID for `add`. `removedNodeIds` includes descendants. `state` is the node's returned local state, including any runtime sessions and activity. An empty state is `{}`. Receipts use the mutation's result rather than a second read, so a later writer cannot change the reported snapshot. They do not combine configuration and runtime state into a single transaction.
+
+```sh
+treety add terminal "Build" --json -- pnpm build
+treety configure --node "$NODE_ID" --json --cwd build
+treety remove --node "$NODE_ID" --yes --json
+```
+
+A successful mutation prints one JSON object to stdout. Errors still print `TreeTY: <message>` to stderr and exit with status 1. `--json` does not bypass `remove --yes` or `init --force` confirmation requirements.
 
 ## Report terminal activity
 

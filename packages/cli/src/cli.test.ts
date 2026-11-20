@@ -598,7 +598,7 @@ test.test("prints help and version without a configuration", async () => {
     await runCli(["--version"], { output: capturedOutput.output }),
     0,
   );
-  assert.equal(capturedOutput.messages.at(-1), "0.0.3");
+  assert.equal(capturedOutput.messages.at(-1), (require("../package.json") as { version: string }).version);
 });
 
 test.test("rejects unknown options before changing configuration", async () => {
@@ -608,7 +608,7 @@ test.test("rejects unknown options before changing configuration", async () => {
     await runCli(["init", "--froce"], { output: capturedOutput.output }),
     1,
   );
-  assert.match(capturedOutput.errors.at(-1) ?? "", /Unknown option --froce/);
+  assert.match(capturedOutput.errors.at(-1) ?? "", /Unknown option ['"]?--froce/);
 });
 
 function createCapturedOutput(): CapturedOutput {
