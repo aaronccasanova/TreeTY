@@ -21,7 +21,7 @@ Read only the references needed for the current task.
 2. Resolve the exact configuration path before making changes. Inside a TreeTY terminal, inspect `treety current` first.
 3. Inspect the current tree and use opaque node IDs for parent, order, rename, configure, metadata, attention, and remove operations.
 4. Apply the smallest requested mutation through the CLI. Do not edit JSON manually when the CLI supports the operation.
-5. List the resulting tree and confirm the intended scope, hierarchy, working directories, project directories, metadata, and restart policies.
+5. Check the mutation receipt when supported, or inspect the resulting tree, to confirm the intended scope and settings. Use `list` when you need the surrounding hierarchy.
 6. Explain whether the result creates only a persistent terminal definition or also starts a VS Code terminal.
 
 Treat `remove --yes` and `init --force` as destructive. Confirm the resolved configuration path and exact target before running either command. Obtain user authorization when the requested work does not already clearly include removal or replacement.
@@ -34,4 +34,6 @@ Treat `remove --yes` and `init --force` as destructive. Confirm the resolved con
 - Do not claim that the current CLI can attach to, reveal, stop, or restart a live terminal. It manages definitions and reports session-scoped activity and attention.
 - Do not invent an external terminal emulator integration. The current adapter launches native VS Code integrated terminals.
 
-To add a leaf and have VS Code launch it after the configuration reloads, use `--restart-policy onOpen`. With the default `manual` policy, the new leaf persists but waits for a user to open or restart it in VS Code.
+For a scripted launch in a particular VS Code window, use the [manual leaf and JSON receipt workflow](references/cli.md#create-a-leaf-for-an-explicit-window), then [open that leaf in the intended window](references/vscode.md#open-a-leaf-in-the-intended-window). Check installed CLI and extension support as those references describe. Use [API v1 lookup](references/vscode.md#look-up-an-exact-live-session) when you need an existing session without launching one.
+
+Keep `--restart-policy onOpen` for terminals that should start automatically when the host loads the tree. Do not temporarily toggle it to route a launch to one window. With `manual`, a new leaf waits for an explicit open or restart through the UI or supported extension commands.
