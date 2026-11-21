@@ -50,7 +50,7 @@ Use `--restart-policy onOpen` in a scripted CLI command only when an automatic p
 
 ## Open a leaf in the intended window
 
-After [creating a manual leaf](cli.md#create-a-leaf-for-an-explicit-window), run the following through an extension or an available VS Code automation bridge in the intended window. Select that window through the bridge first. This is extension-host JavaScript using the VS Code API, not a shell or `code` CLI command. The config path selects a loaded tree inside that window, not the window itself.
+After [creating a manual leaf](cli.md#create-a-leaf-for-an-explicit-window), run the following through an extension or an available VS Code automation bridge in the intended window. Select that window through the bridge first. This is extension-host TypeScript using the VS Code API, not a shell or `code` CLI command. The config path selects a loaded tree inside that window, not the window itself.
 
 Check the activated API version before using the new command target contract. The command name existed before explicit targets, so command availability alone is insufficient. Replace the target values with the CLI receipt's `configFilePath` and `node.id`:
 
@@ -73,7 +73,7 @@ if (opened !== true) throw new Error("TreeTY did not complete the open operation
 
 Use an absolute config path already loaded in this window. A bare ID is supported only when unique across its loaded trees. Empty, unknown, or ambiguous targets reject. If a just-created leaf is not yet visible to the command, await `treety.refresh` in the same window, then retry the same explicit target. Do not substitute a different node or change its restart policy.
 
-Open reveals an existing session or launches a stopped leaf and clears attention. Await its boolean result: `false` means cancellation, and errors reject. Restart and stop follow the same completion contract. Stop retains the configured confirmation unless the caller deliberately supplies `confirm: false`. Disposal does not prove all descendant processes exited. Recovery conflicts retain their separate **Forget previous session and start** decision.
+Open reveals an existing session or starts a terminal session for a stopped leaf and clears attention. Await its boolean result: `false` means cancellation, and errors reject. Restart and stop follow the same completion contract. Stop retains the configured confirmation unless the caller deliberately supplies `confirm: false`. Disposal does not prove all descendant processes exited. Recovery conflicts retain their separate **Forget previous session and start** decision.
 
 If API v1 is unavailable, use the UI or an authorized extension update. Retain `onOpen` for automatic startup. Its global-tree window ownership policy is unchanged.
 
