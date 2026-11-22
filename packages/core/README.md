@@ -20,6 +20,10 @@ const treeConfig = addTreeTerminal(createEmptyTreeConfig(), {
 console.log(formatTreeConfigContent(treeConfig));
 ```
 
+## Terminal operation results
+
+`TreeTYEngine.openTerminal(nodeId)` and `restartTerminal(nodeId)` return `Promise<boolean>`. `true` means the requested reveal or launch completed, including a short-lived session that exits immediately afterward. `false` means the pending operation was cancelled or the engine was disposed. Launch errors reject. Stop, removal, restart, and disposal can cancel an in-flight launch, so callers should use the returned outcome rather than infer success from a later status read.
+
 ## Runtime activity
 
 Each local node state can hold `needsAttention: true` and a `sessions` registry keyed by host session ID. Each registered session can hold an `activity` record with `sessionId`, `reporterId`, `processId`, `state: "busy" | "idle"`, and an optional `metadataPath` JSON Pointer. The pointer's value must equal `reporterId`. Activity belongs to one runtime session. Attention belongs to the persistent node and survives close, restart, and activity cleanup.

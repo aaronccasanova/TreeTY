@@ -82,6 +82,8 @@ Select a local root, global root, or group before using the title-bar controls. 
 
 **Collapse all** first collapses groups beneath the open Global and workspace roots, leaving their top-level entries visible. Use it again to collapse the roots too. Roots you've already closed stay closed. If no top-level groups are expanded, it collapses the roots immediately. Expanding a group, including through search or a terminal link, makes the next collapse return to the top-level overview.
 
+Group and root expansion is saved for the current workspace across refreshes and window reloads. A fresh view starts expanded. After expansion state is saved, new groups start collapsed. Collapse all also closes descendants that haven't been loaded yet. Configuration edits refresh the affected rows and parents, and attention decorations update only when their state changes.
+
 Move opens a searchable representation of the tree with every group expanded and the moving node in view. Select individual groups to collapse or expand them. The top-right collapse control follows the same two-stage behavior as the sidebar: groups first, then the root. The collapse and expand controls clear any active search. The expand control opens the entire tree. Each destination row exposes inline controls ordered as insert above, insert below, and move inside when applicable. The inside control stays at the far right, and terminal leaves receive an extra indentation step to preserve the tree hierarchy. This keeps the editor to one row per node while supporting cross-group moves for terminals and whole groups. Configuration watchers reconcile only the changed tree and preserve matching live sessions. Changes to launch settings apply to the next terminal launch.
 
 Durable attention from `.treety/state.json` appears as a small `!` file decoration without replacing the status icon. The decoration propagates to ancestor groups. Use **Mark needs attention** from the terminal's actions gear or right-click menu before working elsewhere. Both menus offer **Clear attention** for an existing mark. Opening or revealing the terminal also clears attention.
@@ -117,3 +119,45 @@ Migrate `treety link` to `treety uri` and `TREETY_TERMINAL_LINK` to `TREETY_SESS
 Links currently support local desktop VS Code, including Insiders. A recovered native session keeps its link across extension-host reloads. Closing or restarting the terminal ends that session, so open it and copy a new link. If the original window has closed, VS Code may deliver an old link to another window. TreeTY rejects it unless that window has the exact loaded configuration, node, and live session. Missing, deleted, and invalid targets produce an error without launching anything.
 
 Some notification clients restrict custom URL schemes. They must allow the VS Code application URL for this integration to open. Link generation is optional: if VS Code cannot resolve a URL, the terminal still opens and `TREETY_SESSION_URI` is absent.
+
+## Control nodes from commands
+
+Node commands accept a node ID string when it identifies exactly one node in the window. Use an absolute `configFile` path to disambiguate IDs shared by multiple trees:
+
+```ts
+const target = { nodeId: "service-logs", configFile: "/projects/service/.treety/tree.json" };
+const opened = await vscode.commands.executeCommand<boolean>("treety.openTerminal", target);
+```
+
+The configuration must already be loaded in the current window. Empty, missing, unknown, and ambiguous IDs reject instead of selecting another node. Existing tree-view arguments continue to work and resolve against the current configuration. All asynchronous TreeTY commands return their handler's promise and report failures to the caller as well as the notification UI.
+
+`treety.openTerminal`, `treety.restartTerminal`, and `treety.stopTerminal` return `true` when their action completes or `false` when confirmation or a pending launch is cancelled. Opening reveals an existing session or starts a stopped leaf. Restarting uses the existing restart semantics. Stopping requests disposal of the native terminal, without claiming that every descendant process has exited.
+
+Stop uses `treety.confirmBeforeStopping` by default. A target with `confirm: false` explicitly suppresses that prompt, while `confirm: true` requires it regardless of the setting. Naming a node alone doesn't suppress confirmation. Recovery conflicts can still require the separate **Forget previous session and start** decision. Other node commands, such as rename, configure, and delete, retain their interactive prompts.
+
+For scripted launches, create a leaf with `restartPolicy: "manual"`, then call `treety.openTerminal` in the intended window. This avoids temporarily changing `onOpen` and racing other windows' file watchers. General global-tree `onOpen` ownership remains unchanged.
+
+## Look up live terminal identity
+
+Other extensions can activate `TreeTY.treety` and use its versioned API:
+
+```ts
+const extension = vscode.extensions.getExtension("TreeTY.treety");
+const api = await extension?.activate();
+
+if (api?.apiVersion !== 1) throw new Error("TreeTY API version 1 is required.");
+
+const activeTerminal = vscode.window.activeTerminal;
+const terminalIdentity = activeTerminal ? await api.getTerminalIdentity(activeTerminal) : undefined;
+
+if (terminalIdentity) {
+  const terminal = await api.getTerminal(terminalIdentity);
+  terminal?.show();
+}
+```
+
+`getTerminalIdentity(terminal)` returns `{ configFile, nodeId, sessionId }` or `undefined`. It uses TreeTY's verified live bindings, including terminals recovered after a reload with empty creation environments. It doesn't infer ownership from names or PIDs, or expose private recovery records. Unbound, closed, closing, removed, or ambiguous targets don't resolve.
+
+`getTerminal({ configFile, nodeId, sessionId? })` returns the matching live `vscode.Terminal` in this window or `undefined`. `configFile` must be an absolute configuration file path. Include `sessionId` to require the same session and reject a replacement after restart. Omitting it asks for the current session of that leaf. Neither method opens a stopped terminal. Invalid target shapes reject. Both methods return promises so recovery discovery can finish before answering.
+
+The TypeScript contract is in `src/public-api.ts`. Treat `sessionId` as an exact session identifier, not a PID. Callers should revalidate identity before consequential actions after awaiting unrelated work.

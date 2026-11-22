@@ -25,6 +25,8 @@ A successful CLI mutation should therefore update the TreeTY view without reload
 
 Tree changes reconcile only the workspace model identified by the changed URI. Existing terminal sessions and subscriptions survive moves, renames, metadata changes, inherited-setting changes, and launch-setting changes. Added nodes appear in place, removed leaves close their matching sessions, and newly applicable `onOpen` policies retain automatic launch behavior. State-only changes refresh attention without rebuilding the engine.
 
+On versions with saved expansion state, refresh and window reload preserve collapsed groups and roots. New groups start collapsed after expansion state has been saved. If a CLI-created leaf is not visible, expand its ancestors or use node search before treating the configuration reload as failed. Collapse all still closes groups first and roots on the next use.
+
 ## Find nodes in large trees
 
 Use the search icon in the TreeTY title bar or `TreeTY: Search nodes` to find groups and terminals across current roots. The native QuickPick supports name abbreviations, small typos, ancestor/workspace names, directories, and descriptive metadata. Terms can match separate fields, such as a group name and leaf name. Results include ancestry to distinguish duplicate names.
@@ -45,6 +47,63 @@ The CLI creates and changes persistent tree definitions. The VS Code adapter own
 - A valid watched configuration update that removes a leaf also closes its matching live terminal.
 
 Use `--restart-policy onOpen` in a scripted CLI command only when an automatic process launch is intended. Remember that a startup command stored in configuration executes when the host launches the terminal, not when the CLI writes it.
+
+## Open a leaf in the intended window
+
+After [creating a manual leaf](cli.md#create-a-leaf-for-an-explicit-window), run the following through an extension or an available VS Code automation bridge in the intended window. Select that window through the bridge first. This is extension-host TypeScript using the VS Code API, not a shell or `code` CLI command. The config path selects a loaded tree inside that window, not the window itself.
+
+Check the activated API version before using the new command target contract. The command name existed before explicit targets, so command availability alone is insufficient. Replace the target values with the CLI receipt's `configFilePath` and `node.id`:
+
+```ts
+const treeTYExtension = vscode.extensions.getExtension("TreeTY.treety");
+
+const treeTYApi = await treeTYExtension?.activate();
+
+if (treeTYApi?.apiVersion !== 1) throw new Error("TreeTY API version 1 is required.");
+
+const target = {
+  configFile: "/absolute/path/to/tree.json",
+  nodeId: "<node-id-from-receipt>",
+};
+
+const opened = await vscode.commands.executeCommand<boolean>("treety.openTerminal", target);
+
+if (opened !== true) throw new Error("TreeTY did not complete the open operation.");
+```
+
+Use an absolute config path already loaded in this window. A bare ID is supported only when unique across its loaded trees. Empty, unknown, or ambiguous targets reject. If a just-created leaf is not yet visible to the command, await `treety.refresh` in the same window, then retry the same explicit target. Do not substitute a different node or change its restart policy.
+
+Open reveals an existing session or starts a terminal session for a stopped leaf and clears attention. Await its boolean result: `false` means cancellation, and errors reject. Restart and stop follow the same completion contract. Stop retains the configured confirmation unless the caller deliberately supplies `confirm: false`. Disposal does not prove all descendant processes exited. Recovery conflicts retain their separate **Forget previous session and start** decision.
+
+If API v1 is unavailable, use the UI or an authorized extension update. Retain `onOpen` for automatic startup. Its global-tree window ownership policy is unchanged.
+
+## Look up an exact live session
+
+Activate and check API v1 as above. After opening a leaf, use its explicit `target` to find the current native handle and capture its verified identity:
+
+```ts
+const terminalCurrent = await treeTYApi.getTerminal(target);
+
+if (!terminalCurrent) throw new Error("The leaf has no live session in this window.");
+
+const terminalIdentity = await treeTYApi.getTerminalIdentity(terminalCurrent);
+
+if (!terminalIdentity) throw new Error("The terminal has no verified TreeTY identity.");
+```
+
+`getTerminalIdentity` returns `{ configFile, nodeId, sessionId }` or `undefined`, including for verified restored terminals with empty creation environments. If you already have the intended native handle, pass it directly. Do not infer identity from a title, PID, or whichever terminal happens to be active. The captured identity describes the session live at lookup time. Opening returns only a boolean, so a concurrent restart between open and capture can change which session you capture.
+
+Store all three identity fields. Later, in the intended window with API v1 checked, look up that exact session:
+
+```ts
+const terminal = await treeTYApi.getTerminal(terminalIdentity);
+
+if (!terminal) throw new Error("That exact TreeTY session is not live in this window.");
+```
+
+Including `sessionId` rejects a replacement after restart. Omitting it asks for the current session of the leaf instead. Both lookup methods are asynchronous and use verified live bindings in the current window. Closed, closing, removed, unbound, or ambiguous sessions do not resolve. Invalid targets reject.
+
+The lookup methods do not launch, reveal, or clear attention. Extension activation itself still applies configured `onOpen` policies. If an exact lookup is absent, do not drop `sessionId` or call `openTerminal` as a fallback. Revalidate after unrelated asynchronous work before acting on a saved identity. See the [public TypeScript contract](https://github.com/aaronccasanova/TreeTY/blob/main/packages/vscode/src/public-api.ts) for the complete types.
 
 ## Recover native sessions
 
@@ -123,4 +182,4 @@ Terminal status uses theme-aware circles with text and tooltips. A native spinne
 
 Use `treety.activityAnimation` (`auto` or `off`) globally, or **Configure > Activity animation** / terminal `activityAnimation` locally. Disabling animation preserves activity text and attention. Respect disabled native terminal-tab animation and explicit `workbench.reduceMotion: on`. Do not claim that the public API resolves the system preference for `auto` or exposes exact terminal focus. TreeTY does not suppress completion attention based on `activeTerminal`.
 
-Keep the extension, bundled CLI, and any activity-reporting integrations aligned. Old state writers can discard runtime activity fields. Recreate terminals after upgrades to refresh their bundled CLI environment. Runtime activity is scoped to each session so multiple windows can host the same definition independently. Cleanup preserves attention.
+Keep the extension, bundled CLI, and any activity-reporting integrations aligned. Old state writers can discard runtime activity fields. Recreate terminals after upgrades to refresh their bundled CLI environment. Runtime activity is scoped to each session, and the state model supports multiple sessions per node. The VS Code adapter still applies its shared-storage ownership guard before launching. Cleanup preserves attention.

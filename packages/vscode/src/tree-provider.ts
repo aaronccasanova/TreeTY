@@ -9,6 +9,7 @@ import * as vscode from "vscode";
 
 import type { TerminalActivity } from "./terminal-activity";
 import { getTerminalPresentation } from "./terminal-presentation";
+import { TreeExpansionState } from "./tree-expansion-state";
 import type {
   ConfiguredWorkspaceModel,
   WorkspaceModel,
@@ -54,12 +55,22 @@ export class TreeTYTreeProvider
     Map<string, NodeTreeEntry>
   >();
 
+  private readonly workspaceTreeEntryById = new Map<string, WorkspaceTreeEntry>();
+
+  private readonly treeExpansionState: TreeExpansionState;
+
+  private attentionDecorationUris = new Map<string, vscode.Uri>();
+
   public readonly onDidChangeTreeData = this.treeDataChangeEmitter.event;
 
   public readonly onDidChangeFileDecorations =
     this.fileDecorationChangeEmitter.event;
 
-  public constructor(private readonly workspaceModelSource: WorkspaceModelSource) {
+  public constructor(
+    private readonly workspaceModelSource: WorkspaceModelSource,
+    workspaceState?: Pick<vscode.Memento, "get" | "update">,
+  ) {
+    this.treeExpansionState = new TreeExpansionState(workspaceState);
     this.workspaceModelChangeSubscription =
       workspaceModelSource.onDidChangeWorkspaceModels((workspaceModelChange) =>
         this.handleWorkspaceModelChange(workspaceModelChange),
@@ -68,7 +79,7 @@ export class TreeTYTreeProvider
 
   public getTreeItem(treeEntry: TreeEntry): vscode.TreeItem {
     if (treeEntry.kind === "workspace") {
-      return buildWorkspaceTreeItem(treeEntry);
+      return buildWorkspaceTreeItem(treeEntry, this.treeExpansionState.getExpanded(treeEntry.workspaceModel.id));
     }
 
     if (treeEntry.kind === "message") {
@@ -76,7 +87,7 @@ export class TreeTYTreeProvider
     }
 
     if (treeEntry.treeNode.kind === "group") {
-      return buildGroupTreeItem(treeEntry);
+      return buildGroupTreeItem(treeEntry, this.treeExpansionState.getExpanded(getNodeTreeItemId(treeEntry)));
     }
 
     const terminalSessionState =
@@ -95,35 +106,24 @@ export class TreeTYTreeProvider
     const workspaceModels = this.workspaceModelSource.getWorkspaceModels();
 
     if (!treeEntry) {
-      return workspaceModels.map((workspaceModel) => ({
-        kind: "workspace",
-        workspaceModel,
-      }));
+      return workspaceModels.map((workspaceModel) => this.getWorkspaceTreeEntry(workspaceModel));
     }
 
     if (treeEntry.kind === "workspace") {
-      const workspaceChildren = getWorkspaceChildren(treeEntry.workspaceModel);
-
-      this.storeNodeTreeEntries(workspaceChildren);
-
-      return workspaceChildren;
+      return getWorkspaceChildren(treeEntry.workspaceModel).map((workspaceChild) =>
+        workspaceChild.kind === "node" ? this.getNodeTreeEntry(workspaceChild) : workspaceChild,
+      );
     }
 
     if (treeEntry.kind === "message" || treeEntry.treeNode.kind === "terminal") {
       return [];
     }
 
-    const childTreeEntries: NodeTreeEntry[] = treeEntry.treeNode.children.map(
-      (treeNode) => ({
-        kind: "node",
-        workspaceModel: treeEntry.workspaceModel,
-        treeNode,
-      }),
-    );
-
-    this.storeNodeTreeEntries(childTreeEntries);
-
-    return childTreeEntries;
+    return treeEntry.treeNode.children.map((treeNode) => this.getNodeTreeEntry({
+      kind: "node",
+      workspaceModel: treeEntry.workspaceModel,
+      treeNode,
+    }));
   }
 
   public getParent(treeEntry: TreeEntry): TreeEntry | undefined {
@@ -141,11 +141,11 @@ export class TreeTYTreeProvider
       if (treeNode?.parentId) {
         const parentTreeNode = getResolvedTreeNode(workspaceModel.resolvedTreeConfig.tree, treeNode.parentId);
 
-        if (parentTreeNode) return { kind: "node", workspaceModel, treeNode: parentTreeNode };
+        if (parentTreeNode) return this.getNodeTreeEntry({ kind: "node", workspaceModel, treeNode: parentTreeNode });
       }
     }
 
-    return { kind: "workspace", workspaceModel };
+    return this.getWorkspaceTreeEntry(workspaceModel);
   }
 
   public provideFileDecoration(
@@ -180,6 +180,33 @@ export class TreeTYTreeProvider
     );
   }
 
+  public setExpanded(treeEntry: TreeEntry, expanded: boolean): Promise<void> {
+    if (treeEntry.kind === "message") return Promise.resolve();
+    if (treeEntry.kind === "node" && treeEntry.treeNode.kind !== "group") return Promise.resolve();
+
+    const treeItemId = treeEntry.kind === "workspace" ? treeEntry.workspaceModel.id : getNodeTreeItemId(treeEntry);
+
+    return this.treeExpansionState.setExpanded(treeItemId, expanded, () => {
+      const initialTreeItemIds: string[] = [];
+
+      for (const workspaceModel of this.workspaceModelSource.getWorkspaceModels()) {
+        initialTreeItemIds.push(workspaceModel.id);
+
+        if (workspaceModel.kind !== "configured") continue;
+
+        for (const treeNode of getTreeNodes(workspaceModel.resolvedTreeConfig.tree)) {
+          if (treeNode.kind === "group") initialTreeItemIds.push(`${workspaceModel.id}:${treeNode.id}`);
+        }
+      }
+
+      return initialTreeItemIds;
+    });
+  }
+
+  public collapseAll(): Promise<void> {
+    return this.treeExpansionState.collapseAll();
+  }
+
   public dispose(): void {
     this.workspaceModelChangeSubscription.dispose();
     this.treeDataChangeEmitter.dispose();
@@ -189,13 +216,43 @@ export class TreeTYTreeProvider
   private handleWorkspaceModelChange(
     workspaceModelChange: WorkspaceModelChange,
   ): void {
-    if (workspaceModelChange.kind === "attention") {
-      this.fileDecorationChangeEmitter.fire(
-        workspaceModelChange.nodeIds.map((nodeId) =>
-          getNodeDecorationUri(workspaceModelChange.workspaceId, nodeId),
-        ),
+    if (workspaceModelChange.kind === "configuration" || workspaceModelChange.kind === "attention") {
+      this.updateNodeTreeEntries(workspaceModelChange.workspaceId);
+    }
+
+    if (workspaceModelChange.kind !== "terminal" && workspaceModelChange.kind !== "tree") {
+      this.updateFileDecorations();
+    }
+
+    if (workspaceModelChange.kind === "configuration") {
+      const workspaceModel = this.workspaceModelSource.getWorkspaceModels().find(
+        (candidateWorkspaceModel) => candidateWorkspaceModel.id === workspaceModelChange.workspaceId,
       );
 
+      if (!workspaceModel) return;
+
+      const refreshedEntries = new Set<TreeEntry>();
+
+      for (const parentId of workspaceModelChange.parentIds) {
+        const treeEntry = parentId === undefined
+          ? this.getWorkspaceTreeEntry(workspaceModel)
+          : this.nodeTreeEntryByWorkspaceId.get(workspaceModel.id)?.get(parentId);
+
+        if (treeEntry) refreshedEntries.add(treeEntry);
+      }
+
+      for (const nodeId of workspaceModelChange.nodeIds) {
+        const treeEntry = this.nodeTreeEntryByWorkspaceId.get(workspaceModel.id)?.get(nodeId);
+
+        if (treeEntry) refreshedEntries.add(treeEntry);
+      }
+
+      for (const treeEntry of refreshedEntries) this.treeDataChangeEmitter.fire(treeEntry);
+
+      return;
+    }
+
+    if (workspaceModelChange.kind === "attention") {
       for (const nodeId of workspaceModelChange.nodeIds) {
         const nodeTreeEntry = this.nodeTreeEntryByWorkspaceId
           .get(workspaceModelChange.workspaceId)
@@ -223,34 +280,93 @@ export class TreeTYTreeProvider
 
     if (workspaceModelChange.kind === "workspace") {
       this.nodeTreeEntryByWorkspaceId.clear();
+      this.workspaceTreeEntryById.clear();
     }
 
     this.treeDataChangeEmitter.fire(undefined);
+  }
 
-    if (workspaceModelChange.kind === "workspace") {
-      this.fileDecorationChangeEmitter.fire(undefined);
+  private getWorkspaceTreeEntry(workspaceModel: WorkspaceModel): WorkspaceTreeEntry {
+    let workspaceTreeEntry = this.workspaceTreeEntryById.get(workspaceModel.id);
+
+    if (!workspaceTreeEntry) {
+      workspaceTreeEntry = { kind: "workspace", workspaceModel };
+      this.workspaceTreeEntryById.set(workspaceModel.id, workspaceTreeEntry);
+    }
+
+    workspaceTreeEntry.workspaceModel = workspaceModel;
+
+    return workspaceTreeEntry;
+  }
+
+  private getNodeTreeEntry(nodeTreeEntry: NodeTreeEntry): NodeTreeEntry {
+    let nodeTreeEntryById = this.nodeTreeEntryByWorkspaceId.get(nodeTreeEntry.workspaceModel.id);
+
+    if (!nodeTreeEntryById) {
+      nodeTreeEntryById = new Map();
+      this.nodeTreeEntryByWorkspaceId.set(nodeTreeEntry.workspaceModel.id, nodeTreeEntryById);
+    }
+
+    const existingNodeTreeEntry = nodeTreeEntryById.get(nodeTreeEntry.treeNode.id);
+
+    if (existingNodeTreeEntry) {
+      existingNodeTreeEntry.treeNode = nodeTreeEntry.treeNode;
+      existingNodeTreeEntry.workspaceModel = nodeTreeEntry.workspaceModel;
+
+      return existingNodeTreeEntry;
+    }
+
+    nodeTreeEntryById.set(nodeTreeEntry.treeNode.id, nodeTreeEntry);
+
+    return nodeTreeEntry;
+  }
+
+  private updateNodeTreeEntries(workspaceId: string): void {
+    const workspaceModel = this.workspaceModelSource.getWorkspaceModels().find(
+      (candidateWorkspaceModel) => candidateWorkspaceModel.id === workspaceId,
+    );
+    const nodeTreeEntryById = this.nodeTreeEntryByWorkspaceId.get(workspaceId);
+
+    if (!workspaceModel || workspaceModel.kind !== "configured" || !nodeTreeEntryById) return;
+
+    const treeNodeById = new Map(getTreeNodes(workspaceModel.resolvedTreeConfig.tree).map((treeNode) => [treeNode.id, treeNode]));
+
+    for (const [nodeId, nodeTreeEntry] of nodeTreeEntryById) {
+      const treeNode = treeNodeById.get(nodeId);
+
+      if (!treeNode) {
+        nodeTreeEntryById.delete(nodeId);
+        continue;
+      }
+
+      nodeTreeEntry.treeNode = treeNode;
+      nodeTreeEntry.workspaceModel = workspaceModel;
     }
   }
 
-  private storeNodeTreeEntries(treeEntries: readonly TreeEntry[]): void {
-    for (const treeEntry of treeEntries) {
-      if (treeEntry.kind !== "node") continue;
+  private updateFileDecorations(): void {
+    const attentionDecorationUris = new Map<string, vscode.Uri>();
 
-      let nodeTreeEntryById = this.nodeTreeEntryByWorkspaceId.get(
-        treeEntry.workspaceModel.id,
-      );
+    for (const workspaceModel of this.workspaceModelSource.getWorkspaceModels()) {
+      if (workspaceModel.kind !== "configured") continue;
 
-      if (!nodeTreeEntryById) {
-        nodeTreeEntryById = new Map<string, NodeTreeEntry>();
+      for (const treeNode of getTreeNodes(workspaceModel.resolvedTreeConfig.tree)) {
+        if (!getTreeNodeNeedsAttention(treeNode)) continue;
 
-        this.nodeTreeEntryByWorkspaceId.set(
-          treeEntry.workspaceModel.id,
-          nodeTreeEntryById,
-        );
+        const decorationUri = getNodeDecorationUri(workspaceModel.id, treeNode.id);
+
+        attentionDecorationUris.set(decorationUri.toString(), decorationUri);
       }
-
-      nodeTreeEntryById.set(treeEntry.treeNode.id, treeEntry);
     }
+
+    const changedDecorationUris = [
+      ...[...this.attentionDecorationUris].filter(([uri]) => !attentionDecorationUris.has(uri)),
+      ...[...attentionDecorationUris].filter(([uri]) => !this.attentionDecorationUris.has(uri)),
+    ].map(([, decorationUri]) => decorationUri);
+
+    this.attentionDecorationUris = attentionDecorationUris;
+
+    if (changedDecorationUris.length > 0) this.fileDecorationChangeEmitter.fire(changedDecorationUris);
   }
 }
 
@@ -273,10 +389,11 @@ function getWorkspaceChildren(workspaceModel: WorkspaceModel): TreeEntry[] {
 
 function buildWorkspaceTreeItem(
   workspaceTreeEntry: WorkspaceTreeEntry,
+  expanded: boolean,
 ): vscode.TreeItem {
   const workspaceTreeItem = new vscode.TreeItem(
     workspaceTreeEntry.workspaceModel.name,
-    vscode.TreeItemCollapsibleState.Expanded,
+    expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
   );
 
   workspaceTreeItem.id = workspaceTreeEntry.workspaceModel.id;
@@ -336,10 +453,10 @@ function buildMessageTreeItem(messageTreeEntry: MessageTreeEntry): vscode.TreeIt
   return messageTreeItem;
 }
 
-function buildGroupTreeItem(nodeTreeEntry: NodeTreeEntry): vscode.TreeItem {
+function buildGroupTreeItem(nodeTreeEntry: NodeTreeEntry, expanded: boolean): vscode.TreeItem {
   const groupTreeItem = new vscode.TreeItem(
     nodeTreeEntry.treeNode.name,
-    vscode.TreeItemCollapsibleState.Expanded,
+    expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
   );
 
   groupTreeItem.id = getNodeTreeItemId(nodeTreeEntry);
@@ -523,4 +640,11 @@ function getResolvedTreeNode(
   }
 
   return undefined;
+}
+
+function getTreeNodes(treeNodes: readonly ResolvedTreeNode[]): ResolvedTreeNode[] {
+  return treeNodes.flatMap((treeNode) => [
+    treeNode,
+    ...(treeNode.kind === "group" ? getTreeNodes(treeNode.children) : []),
+  ]);
 }

@@ -32,6 +32,8 @@ npx --yes @treety/cli@latest help
 
 Use the same runner consistently for the remaining examples, replacing `treety` when necessary.
 
+Use `treety <command> --help` or `treety help <command>` for scoped options on versions that support them. Before using mutation receipts below, check that `treety add terminal --help` shows add-specific usage and lists `--json` among that command's options. Older versions may print global help, where `list --json` does not establish mutation support. If the installed CLI lacks it, use the existing text/list workflow or an authorized upgrade.
+
 ## Resolve configuration scope
 
 Run both path and list commands before a mutation:
@@ -93,7 +95,7 @@ treety current
 treety show
 ```
 
-`TREETY_NODE_ID` supplies the default node target. A positional node ID or `--node <node-id>` takes precedence. Outside a TreeTY terminal, pass a node ID explicitly.
+`TREETY_NODE_ID` supplies the default node target. A positional node ID or `--node <node-id>` takes precedence. Outside a TreeTY terminal, pass a node ID explicitly. Quote shell variables, for example `treety show --node "$node_id"`. Updated CLIs reject explicitly empty IDs, but an unquoted empty variable disappears before the CLI sees it and can still select the environment default.
 `treety current` also reports the config source and `TREETY_SESSION_ID` when the host provides them. The session ID identifies the runtime terminal instance and can change when the terminal is recreated. The node ID remains stable.
 
 ## Link to a VS Code terminal
@@ -136,7 +138,7 @@ treety add terminal "Background worker" \
   -- pnpm run worker
 ```
 
-Without `--id`, TreeTY generates an opaque UUID that remains stable across renames and moves. Capture the ID printed by `add` or read it from `list`. Use `--id` only when the workflow genuinely needs an externally chosen identifier.
+Without `--id`, TreeTY generates an opaque UUID that remains stable across renames and moves. Prefer `--json` receipts for scripts when supported, as shown below. Otherwise capture the ID printed by `add` or read it from `list`. Use `--id` only when the workflow genuinely needs an externally chosen identifier.
 
 Node options inherit through the tree:
 
@@ -150,6 +152,37 @@ Node options inherit through the tree:
 - `--metadata <json>` stores an optional freeform JSON value on the node without inheritance.
 
 Group nodes accept the same options and pass their resolved defaults to descendants. A terminal startup command takes precedence over its inherited shell configuration.
+
+For option values beginning with a dash, use `=`, for example `--shell-arg=-l` or `--node=-example`. Keep startup arguments after `--` so they are not parsed as TreeTY options.
+
+## Create a leaf for an explicit window
+
+With mutation receipt support, create the definition with an explicit `manual` policy, even if its parent uses `onOpen`. Use a configuration already loaded in the intended VS Code window. Replace the example paths with the resolved config and working directory:
+
+```sh
+config_file_path="/absolute/path/to/tree.json"
+
+receipt="$(treety add terminal "API server" \
+  --config "$config_file_path" \
+  --cwd /absolute/path/to/service \
+  --restart-policy manual \
+  --json \
+  -- pnpm dev)" || exit 1
+
+node_id="$(printf '%s\n' "$receipt" | node --input-type=module -e '
+  import * as fs from "node:fs";
+
+  const receipt = JSON.parse(fs.readFileSync(0, "utf8"));
+
+  process.stdout.write(receipt.node.id);
+')" || exit 1
+
+printf 'configFile=%s\nnodeId=%s\n' "$config_file_path" "$node_id"
+```
+
+The receipt contains `configFilePath` and the stored `node`, including its generated `id`. Carry that config path and ID into [the explicit-window open command](vscode.md#open-a-leaf-in-the-intended-window). This mutation does not launch the process. If VS Code control is unavailable, leave the manual leaf for an explicit UI open rather than toggling `onOpen`.
+
+All mutation commands support `--json` in this CLI generation. Use the returned snapshot to verify that mutation without parsing prose or rereading solely to recover a generated ID. A receipt does not promise that another writer has not changed the tree afterward. Failures still exit nonzero with errors on stderr, so check success before consuming stdout. See the [CLI receipt shapes](https://github.com/aaronccasanova/TreeTY/blob/main/packages/cli/README.md#use-the-cli-from-scripts) when using other mutations. Confirmation requirements remain unchanged.
 
 ## Rename, move, and remove nodes
 
@@ -225,7 +258,7 @@ treety attention clear <node-id>
 
 Inside the target terminal, both commands infer the config and node from `TREETY_CONFIG_FILE` and `TREETY_NODE_ID`. Attention is idempotent and stored in local `state.json`, not declarative `tree.json`.
 
-Before removal, resolve the scope, inspect the tree, verify the exact ID, and obtain any required authorization. List the tree again after every mutation.
+Before removal, resolve the scope, inspect the tree, verify the exact ID, and obtain any required authorization. After a mutation, check its receipt or inspect the resulting tree. List again when you need the surrounding hierarchy.
 
 ## Understand current limits
 

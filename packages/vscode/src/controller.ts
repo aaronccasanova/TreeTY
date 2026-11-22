@@ -32,9 +32,12 @@ import type {
 } from "@treety/core";
 import * as vscode from "vscode";
 
+import { getWorkspaceTreeChange } from "./get-workspace-tree-change";
 import { collapseMoveTree } from "./move-tree-state";
 import type { MoveTreeEditorState } from "./move-tree-state";
+import { resolveCommandNodeEntry, parseNodeCommandTarget } from "./node-command-target";
 import { resolveNodeSearchEntry } from "./node-search";
+import type { TerminalIdentity, TerminalTarget } from "./public-api";
 import { revealTerminalLink } from "./terminal-links";
 import type { TerminalLinkManager, TerminalLinkTarget } from "./terminal-links";
 import type { TerminalRecoveryRegistry } from "./terminal-recovery";
@@ -72,7 +75,7 @@ interface MoveTreeQuickPickItem extends vscode.QuickPickItem {
 }
 
 interface NodeActionQuickPickItem extends vscode.QuickPickItem {
-  execute: () => Promise<void>;
+  execute: () => Promise<unknown>;
 }
 
 interface ExplorerDirectory {
@@ -572,19 +575,70 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     );
   }
 
-  public async openTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+  public async resolveCommandNodeEntry(argument: unknown): Promise<NodeTreeEntry> {
+    await this.workspaceReloadPromise;
+
+    if (this.disposed) throw new Error("TreeTY is no longer active.");
+
+    return resolveCommandNodeEntry(this.workspaceModels, argument);
+  }
+
+  public async getTerminalIdentity(terminal: vscode.Terminal): Promise<TerminalIdentity | undefined> {
+    await this.workspaceReloadPromise;
+
+    if (this.disposed) return undefined;
+
+    const terminalIdentities: TerminalIdentity[] = [];
+
+    for (const workspaceModel of this.workspaceModels) {
+      if (workspaceModel.kind !== "configured") continue;
+
+      const terminalIdentity = await workspaceModel.vscodeTerminalHost.getTerminalIdentity(terminal);
+
+      if (terminalIdentity) terminalIdentities.push(terminalIdentity);
+    }
+
+    return terminalIdentities.length === 1 ? terminalIdentities[0] : undefined;
+  }
+
+  public async getTerminal(target: TerminalTarget): Promise<vscode.Terminal | undefined> {
+    const nodeCommandTarget = parseNodeCommandTarget(target);
+
+    if (nodeCommandTarget.configFile === undefined) throw new Error("Supply an absolute configFile path.");
+    if (target.sessionId !== undefined && (typeof target.sessionId !== "string" || target.sessionId.trim() === "")) {
+      throw new Error("sessionId must be nonempty when supplied.");
+    }
+
+    await this.workspaceReloadPromise;
+
+    if (this.disposed) return undefined;
+
+    const workspaceModels = this.workspaceModels.filter((workspaceModel) =>
+      workspaceModel.kind === "configured" &&
+      path.normalize(workspaceModel.configFileUri.fsPath) === path.normalize(nodeCommandTarget.configFile!),
+    );
+    const workspaceModel = workspaceModels[0];
+
+    if (workspaceModels.length !== 1 || workspaceModel?.kind !== "configured") return undefined;
+
+    return workspaceModel.vscodeTerminalHost.getTerminal({ ...target, configFile: workspaceModel.configFileUri.fsPath });
+  }
+
+  public async openTerminal(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") throw new Error("The target must be a terminal node.");
 
     await this.setTerminalAttention(nodeTreeEntry, false);
 
     try {
-      await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(nodeTreeEntry.treeNode.id);
+      if (!(await nodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(nodeTreeEntry.treeNode.id))) return false;
     } catch (error) {
       if (!(error instanceof TerminalRecoveryError) || !error.canForget) throw error;
-      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return;
+      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return false;
     }
 
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+
+    return true;
   }
 
   private async confirmForgetTerminalSession(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
@@ -610,12 +664,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     currentNodeTreeEntry.workspaceModel.vscodeTerminalHost.allowNextSessionCreation(currentNodeTreeEntry.treeNode.id);
 
     try {
-      await currentNodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(currentNodeTreeEntry.treeNode.id);
+      return await currentNodeTreeEntry.workspaceModel.treeTYEngine.openTerminal(currentNodeTreeEntry.treeNode.id);
     } finally {
       currentNodeTreeEntry.workspaceModel.vscodeTerminalHost.revokeSessionCreation(currentNodeTreeEntry.treeNode.id);
     }
-
-    return true;
   }
 
   public async copyTerminalLink(nodeTreeEntry: NodeTreeEntry): Promise<void> {
@@ -675,19 +727,21 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     });
   }
 
-  public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+  public async restartTerminal(nodeTreeEntry: NodeTreeEntry): Promise<boolean> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") throw new Error("The target must be a terminal node.");
 
     await this.setTerminalAttention(nodeTreeEntry, false);
 
     try {
-      await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(nodeTreeEntry.treeNode.id);
+      if (!(await nodeTreeEntry.workspaceModel.treeTYEngine.restartTerminal(nodeTreeEntry.treeNode.id))) return false;
     } catch (error) {
       if (!(error instanceof TerminalRecoveryError) || !error.canForget) throw error;
-      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return;
+      if (!(await this.confirmForgetTerminalSession(nodeTreeEntry))) return false;
     }
 
     await this.syncExplorerDirectory(nodeTreeEntry, false);
+
+    return true;
   }
 
   public async restartGroupTerminals(
@@ -736,10 +790,10 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     await this.syncExplorerDirectory(nodeTreeEntry, true);
   }
 
-  public async stopTerminal(nodeTreeEntry: NodeTreeEntry): Promise<void> {
-    if (nodeTreeEntry.treeNode.kind !== "terminal") return;
+  public async stopTerminal(nodeTreeEntry: NodeTreeEntry, confirm?: boolean): Promise<boolean> {
+    if (nodeTreeEntry.treeNode.kind !== "terminal") throw new Error("The target must be a terminal node.");
 
-    const confirmBeforeStopping = vscode.workspace
+    const confirmBeforeStopping = confirm ?? vscode.workspace
       .getConfiguration("treety")
       .get<boolean>("confirmBeforeStopping", true);
 
@@ -750,12 +804,16 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
         "Stop terminal",
       );
 
-      if (confirmation !== "Stop terminal") return;
+      if (confirmation !== "Stop terminal") return false;
     }
 
-    nodeTreeEntry.workspaceModel.treeTYEngine.stopTerminal(
-      nodeTreeEntry.treeNode.id,
-    );
+    const currentNodeTreeEntry = await this.resolveCommandNodeEntry(nodeTreeEntry);
+
+    if (currentNodeTreeEntry.treeNode.kind !== "terminal") throw new Error("The target must be a terminal node.");
+
+    currentNodeTreeEntry.workspaceModel.treeTYEngine.stopTerminal(currentNodeTreeEntry.treeNode.id);
+
+    return true;
   }
 
   public deactivate(): Promise<void> {
@@ -909,6 +967,7 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
       return;
     }
 
+    const previousResolvedTreeConfig = workspaceModel.resolvedTreeConfig;
     const previousTreeState = workspaceModel.treeState;
     const treeConfig =
       changedFileKind === "config"
@@ -943,7 +1002,11 @@ export class TreeTYController implements WorkspaceModelSource, vscode.Disposable
     workspaceModel.vscodeTerminalHost.updateActivity(resolvedTreeConfig, treeState);
 
     if (changedFileKind === "config") {
-      this.workspaceModelChangeEmitter.fire({ kind: "workspace" });
+      this.workspaceModelChangeEmitter.fire({
+        kind: "configuration",
+        workspaceId: workspaceModel.id,
+        ...getWorkspaceTreeChange(previousResolvedTreeConfig.tree, resolvedTreeConfig.tree),
+      });
 
       return;
     }

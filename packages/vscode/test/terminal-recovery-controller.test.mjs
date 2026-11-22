@@ -85,6 +85,8 @@ nodeTest.test("confirmation revokes unused permission when the session recovers 
   fixture.vscode.window.showWarningMessage = async () => {
     fixture.workspaceModel.treeTYEngine.openTerminal = async () => {
       fixture.calls.push("reveal recovered");
+
+      return true;
     };
 
     return "Forget previous session and start";
@@ -292,6 +294,79 @@ nodeTest.test("deactivation disposes and flushes loading and retiring hosts outs
   assert.equal(fixture.controller.vscodeTerminalHosts.has(retiringHost), false);
 });
 
+nodeTest.test("scripted stop preserves confirmation and reports cancellation", async () => {
+  const fixture = createFixture();
+
+  fixture.vscode.workspace.getConfiguration = () => ({ get: () => true });
+  fixture.workspaceModel.treeTYEngine.stopTerminal = () => fixture.calls.push("stop");
+
+  assert.equal(await fixture.controller.stopTerminal(fixture.nodeTreeEntry), false);
+  assert.deepEqual(fixture.calls, ["warning"]);
+  fixture.warningChoice = "Stop terminal";
+  assert.equal(await fixture.controller.stopTerminal(fixture.nodeTreeEntry), true);
+  assert.deepEqual(fixture.calls, ["warning", "warning", "stop"]);
+});
+
+nodeTest.test("only an explicit false suppresses stop confirmation, and true overrides the setting", async () => {
+  const fixture = createFixture();
+
+  fixture.vscode.workspace.getConfiguration = () => ({ get: () => true });
+  fixture.workspaceModel.treeTYEngine.stopTerminal = () => fixture.calls.push("stop");
+
+  assert.equal(await fixture.controller.stopTerminal(fixture.nodeTreeEntry, false), true);
+  assert.deepEqual(fixture.calls, ["stop"]);
+  fixture.vscode.workspace.getConfiguration = () => ({ get: () => false });
+  assert.equal(await fixture.controller.stopTerminal(fixture.nodeTreeEntry, true), false);
+  assert.deepEqual(fixture.calls, ["stop", "warning"]);
+});
+
+nodeTest.test("stop revalidates a node removed during confirmation", async () => {
+  const fixture = createFixture();
+
+  fixture.vscode.workspace.getConfiguration = () => ({ get: () => true });
+  fixture.workspaceModel.treeTYEngine.stopTerminal = () => fixture.calls.push("stop");
+  fixture.vscode.window.showWarningMessage = async () => {
+    fixture.workspaceModel.resolvedTreeConfig.tree = [];
+
+    return "Stop terminal";
+  };
+
+  await assert.rejects(fixture.controller.stopTerminal(fixture.nodeTreeEntry), /no longer available/);
+  assert.equal(fixture.calls.includes("stop"), false);
+});
+
+nodeTest.test("public lookup normalizes absolute config paths and validates session fences", async () => {
+  const fixture = createFixture();
+  const terminal = {};
+  const targets = [];
+
+  fixture.workspaceModel.configFileUri = { fsPath: "/tmp/tree.json" };
+  fixture.workspaceModel.vscodeTerminalHost.getTerminal = async (target) => {
+    targets.push(target);
+
+    return terminal;
+  };
+
+  assert.equal(await fixture.controller.getTerminal({
+    configFile: "/tmp/./tree.json", nodeId: "shell", sessionId: "session",
+  }), terminal);
+  assert.deepEqual(targets, [{ configFile: "/tmp/tree.json", nodeId: "shell", sessionId: "session" }]);
+  assert.equal(await fixture.controller.getTerminal({ configFile: "/other/tree.json", nodeId: "shell" }), undefined);
+  await assert.rejects(fixture.controller.getTerminal({ configFile: "tree.json", nodeId: "shell" }), /absolute/);
+  await assert.rejects(fixture.controller.getTerminal({ configFile: "/tmp/tree.json", nodeId: "shell", sessionId: "" }), /nonempty/);
+});
+
+nodeTest.test("engine launch cancellation reaches the command caller without Explorer sync", async () => {
+  const fixture = createFixture();
+
+  fixture.workspaceModel.treeTYEngine.openTerminal = async () => false;
+  fixture.workspaceModel.treeTYEngine.restartTerminal = async () => false;
+
+  assert.equal(await fixture.controller.openTerminal(fixture.nodeTreeEntry), false);
+  assert.equal(await fixture.controller.restartTerminal(fixture.nodeTreeEntry), false);
+  assert.deepEqual(fixture.calls, ["attention", "attention"]);
+});
+
 function createFixture(recoveryCanForget = true) {
   const fixture = {
     calls: [],
@@ -354,6 +429,8 @@ function createFixture(recoveryCanForget = true) {
         }
 
         fixture.calls.push("create");
+
+        return true;
       },
       async restartTerminal() {
         fixture.calls.push("restart");

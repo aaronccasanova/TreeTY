@@ -143,6 +143,47 @@ nodeTest.test("recovers a reconnected terminal from its registered title with an
   assert.ok(fixture.registeredSessions.includes(recoveryRecord.sessionId));
 });
 
+nodeTest.test("public lookups recover empty-environment terminals and fence exact session identity", async (testContext) => {
+  const fixture = createFixture();
+
+  testContext.after(() => fixture.host.dispose());
+  await markRestoredTerminal(fixture, fixture.terminals[0], "first");
+
+  const terminal = fixture.terminals[0];
+  const terminalIdentity = await fixture.host.getTerminalIdentity(terminal);
+
+  assert.deepEqual(terminalIdentity, {
+    configFile: "/tmp/tree.json", nodeId: "first", sessionId: "session-first",
+  });
+  assert.equal(await fixture.host.getTerminal(terminalIdentity), terminal);
+  assert.equal(await fixture.host.getTerminal({ ...terminalIdentity, sessionId: "stale" }), undefined);
+  assert.equal(await fixture.host.getTerminal({ ...terminalIdentity, configFile: "/other/tree.json" }), undefined);
+  assert.equal(await fixture.host.getTerminalIdentity({ ...terminal }), undefined);
+
+  fixture.host.closeSession("session-first");
+  assert.equal(await fixture.host.getTerminalIdentity(terminal), undefined);
+  assert.equal(await fixture.host.getTerminal(terminalIdentity), undefined);
+});
+
+nodeTest.test("public lookups reject duplicate unbound identities and removed definitions", async (testContext) => {
+  const fixture = createFixture();
+
+  testContext.after(() => fixture.host.dispose());
+  const terminal = fixture.terminals[0];
+
+  fixture.terminals.push({ ...terminal });
+  assert.equal(await fixture.host.getTerminalIdentity(terminal), undefined);
+  assert.equal(await fixture.host.getTerminal({ configFile: "/tmp/tree.json", nodeId: "first" }), undefined);
+
+  fixture.terminals.pop();
+  const terminalIdentity = await fixture.host.getTerminalIdentity(terminal);
+
+  assert.ok(terminalIdentity);
+  fixture.host.updateActivity({ tree: [] }, { version: 1, nodes: {} });
+  assert.equal(await fixture.host.getTerminalIdentity(terminal), undefined);
+  assert.equal(await fixture.host.getTerminal(terminalIdentity), undefined);
+});
+
 nodeTest.test("creation persists a recovery marker without changing the configured terminal name", async (testContext) => {
   const fixture = createFixture({ terminals: [] });
   testContext.after(() => fixture.host.dispose());

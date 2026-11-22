@@ -75,17 +75,19 @@ export class TreeTYEngine implements Disposable {
     }
   }
 
-  public async openTerminal(nodeId: string): Promise<void> {
+  public async openTerminal(nodeId: string): Promise<boolean> {
+    if (this.disposed) return false;
+
     const terminalNode = this.getTerminalNode(nodeId);
     const terminalSessionState = this.getTerminalSessionState(nodeId);
 
     if (terminalSessionState.hostSessionId) {
       this.terminalHost.revealSession(terminalSessionState.hostSessionId);
 
-      return;
+      return true;
     }
 
-    await this.createTerminalSession(terminalNode, true);
+    return await this.createTerminalSession(terminalNode, true);
   }
 
   public async reconcile(
@@ -129,7 +131,9 @@ export class TreeTYEngine implements Disposable {
     }
   }
 
-  public async restartTerminal(nodeId: string): Promise<void> {
+  public async restartTerminal(nodeId: string): Promise<boolean> {
+    if (this.disposed) return false;
+
     const terminalNode = this.getTerminalNode(nodeId);
 
     this.cancelTerminalSessionCreation(nodeId);
@@ -141,7 +145,7 @@ export class TreeTYEngine implements Disposable {
 
     this.terminalSessionStore.setTerminalSessionState(nodeId, "stopped");
 
-    await this.createTerminalSession(terminalNode, true);
+    return await this.createTerminalSession(terminalNode, true);
   }
 
   public stopTerminal(nodeId: string): void {
@@ -184,8 +188,8 @@ export class TreeTYEngine implements Disposable {
   private async createTerminalSession(
     terminalNode: ResolvedTreeTerminal,
     revealTerminal: boolean,
-  ): Promise<void> {
-    if (this.disposed) return;
+  ): Promise<boolean> {
+    if (this.disposed) return false;
 
     let terminalSessionCreation = this.terminalSessionCreationByNodeId.get(
       terminalNode.id,
@@ -210,13 +214,13 @@ export class TreeTYEngine implements Disposable {
     try {
       const hostedTerminalSession = await terminalSessionCreation.promise;
 
-      if (
-        hostedTerminalSession &&
-        !terminalSessionCreation.abortController.signal.aborted &&
-        revealTerminal
-      ) {
+      if (!hostedTerminalSession || terminalSessionCreation.abortController.signal.aborted) return false;
+
+      if (revealTerminal) {
         this.terminalHost.revealSession(hostedTerminalSession.id);
       }
+
+      return true;
     } finally {
       if (
         this.terminalSessionCreationByNodeId.get(terminalNode.id) ===
