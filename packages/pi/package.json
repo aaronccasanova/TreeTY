@@ -1,6 +1,6 @@
 {
   "name": "@treety/pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Connect Pi sessions to TreeTY terminal resume, activity, and attention state.",
   "license": "MIT",
   "keywords": [
