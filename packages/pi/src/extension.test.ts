@@ -5,6 +5,8 @@ import registerTreeTYExtension, { assertTreeTYEnvironment } from "./extension";
 
 type PiExtensionAPI = Parameters<typeof registerTreeTYExtension>[0];
 type PiCommand = Parameters<PiExtensionAPI["registerCommand"]>[1];
+type PiTool = Parameters<PiExtensionAPI["registerTool"]>[0];
+type PiToolResult = Awaited<ReturnType<PiTool["execute"]>>;
 type PiEventName = Parameters<PiExtensionAPI["on"]>[0];
 type PiEventHandler = Parameters<PiExtensionAPI["on"]>[1];
 type PiCommandResult = Awaited<ReturnType<PiExtensionAPI["exec"]>>;
@@ -28,11 +30,23 @@ interface ExtensionHarnessOptions {
 const piSessionId = "pi-session-123";
 const metadataReadCommand = ["treety", "metadata", "get"];
 
-for (const commandName of ["treety-link", "treety-setup"]) {
+for (const commandName of ["treety-link", "treety-setup", "treety_link"]) {
   test.test(`${commandName} links session resume without PI_SESSION_ID and signals activity and attention`, async () => {
     await withTreeTYExtension({}, async (extensionHarness) => {
       await extensionHarness.emitEvent("session_start", "startup");
-      await extensionHarness.invokeCommand(commandName);
+      if (commandName === "treety_link") {
+        const toolResult = await extensionHarness.invokeTool(commandName);
+
+        assert.deepEqual(toolResult, {
+          content: [{
+            type: "text",
+            text: "TreeTY will resume this Pi session and show its activity and attention state.",
+          }],
+          details: undefined,
+        });
+      } else {
+        await extensionHarness.invokeCommand(commandName);
+      }
       await extensionHarness.emitEvent("agent_start");
       await extensionHarness.emitEvent("agent_settled");
       await extensionHarness.emitEvent("session_compact");
@@ -52,7 +66,7 @@ for (const commandName of ["treety-link", "treety-setup"]) {
         getActivityCommand("idle", "set"),
         getActivityCommand("idle", "set"),
       ]);
-      assert.equal(extensionHarness.notifications.length, 1);
+      assert.equal(extensionHarness.notifications.length, commandName === "treety_link" ? 0 : 1);
     });
   });
 }
@@ -491,6 +505,201 @@ test.test("a missing TreeTY terminal session cannot configure or register activi
   });
 });
 
+test.test("registers only the two requested tools with no session arguments", async () => {
+  await withTreeTYExtension({}, async (extensionHarness) => {
+    assert.deepEqual([...extensionHarness.registeredTools.keys()], ["treety_link", "treety_unlink"]);
+
+    for (const tool of extensionHarness.registeredTools.values()) {
+      assert.deepEqual(tool.parameters, { type: "object", properties: {}, additionalProperties: false });
+      assert.equal(tool.executionMode, "sequential");
+      assert.ok(tool.label);
+      assert.ok(tool.description);
+    }
+  });
+});
+
+test.test("link tool captures the invoking session before waiting for lifecycle work", async () => {
+  const metadataReadStarted = createDeferred();
+  const metadataReadReleased = createDeferred();
+
+  await withTreeTYExtension({
+    executeCommand: async (commandArguments) => {
+      if (commandArguments[0] !== "metadata" || commandArguments[1] !== "get") return undefined;
+
+      metadataReadStarted.resolve();
+      await metadataReadReleased.promise;
+
+      return { code: 0, stderr: "", stdout: "null" };
+    },
+  }, async (extensionHarness) => {
+    const sessionStart = extensionHarness.emitEvent("session_start");
+    await metadataReadStarted.promise;
+
+    extensionHarness.setIsIdle(false);
+    const link = extensionHarness.invokeTool("treety_link");
+    extensionHarness.setSessionId("pi-session-replacement");
+    metadataReadReleased.resolve();
+
+    await Promise.all([sessionStart, link]);
+    await extensionHarness.emitEvent("agent_settled");
+
+    assert.deepEqual(extensionHarness.treeTYCommands, [
+      metadataReadCommand,
+      ["treety", "configure", "--cwd", "/workspace/packages/pi", "--", "pi", "--session", piSessionId],
+      ["treety", "metadata", "set-path", "/integrations/pi/sessionId", JSON.stringify(piSessionId)],
+      getActivityCommand("register"),
+      getActivityCommand("busy"),
+    ]);
+    assert.deepEqual(extensionHarness.notifications, []);
+  });
+});
+
+test.test("unlink tool removes resume and stops later signals while preserving terminal settings", async () => {
+  const node = createLinkedNode();
+  const expectedNode = structuredClone(node);
+  delete expectedNode.command;
+  expectedNode.metadata = {
+    owner: "platform",
+    integrations: { pi: { label: "keep this" }, codex: { sessionId: "unrelated-session" } },
+  };
+
+  await withTreeTYExtension({ node }, async (extensionHarness) => {
+    await extensionHarness.emitEvent("session_start");
+    await extensionHarness.emitEvent("agent_start");
+
+    const toolResult = await extensionHarness.invokeTool("treety_unlink");
+    const unlinkCommandCount = extensionHarness.treeTYCommands.length;
+
+    await extensionHarness.emitEvent("agent_settled");
+    await extensionHarness.emitEvent("session_compact");
+    await extensionHarness.emitEvent("ui_prompt_start");
+    await extensionHarness.emitEvent("ui_prompt_end");
+    await extensionHarness.emitEvent("session_shutdown");
+
+    assert.deepEqual(node, expectedNode);
+    assert.equal(extensionHarness.treeTYCommands.length, unlinkCommandCount);
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("unregister"));
+    assert.deepEqual(toolResult, {
+      content: [{ type: "text", text: "Unlinked this Pi session. The terminal and saved conversation are preserved." }],
+      details: undefined,
+    });
+    assert.deepEqual(extensionHarness.notifications, []);
+
+    const repeatResult = await extensionHarness.invokeTool("treety_unlink");
+
+    assert.deepEqual(repeatResult.content, [{ type: "text", text: "This Pi session is already unlinked from this TreeTY terminal." }]);
+    assert.deepEqual(node, expectedNode);
+    assert.equal(extensionHarness.treeTYCommands.filter((command) => command[1] === "configure").length, 1);
+
+    await extensionHarness.invokeTool("treety_link");
+    await extensionHarness.emitEvent("agent_settled");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
+  });
+});
+
+test.test("unlink tool preserves a custom command and reports it", async () => {
+  const node = createLinkedNode();
+  node.command = { executable: "pi", args: ["--session", piSessionId, "--model", "custom"] };
+  const command = structuredClone(node.command);
+
+  await withTreeTYExtension({ node }, async (extensionHarness) => {
+    const toolResult = await extensionHarness.invokeTool("treety_unlink");
+
+    assert.deepEqual(node.command, command);
+    assert.deepEqual(toolResult.content, [{
+      type: "text",
+      text: "Unlinked this Pi session. The terminal and saved conversation are preserved. The custom startup command was left unchanged.",
+    }]);
+  });
+});
+
+test.test("unlink tool refuses a foreign session and leaves the queue usable", async () => {
+  const node = createLinkedNode();
+  node.metadata = { integrations: { pi: { sessionId: "another-session" } } };
+  const originalNode = structuredClone(node);
+
+  await withTreeTYExtension({ node }, async (extensionHarness) => {
+    await assert.rejects(extensionHarness.invokeTool("treety_unlink"), /different Pi session/);
+
+    assert.deepEqual(node, originalNode);
+    assert.deepEqual(extensionHarness.treeTYCommands, [["treety", "show"]]);
+    assert.deepEqual(extensionHarness.notifications, []);
+
+    extensionHarness.setSessionId("another-session");
+    const toolResult = await extensionHarness.invokeTool("treety_unlink");
+
+    assert.match(toolResult.content[0]!.text, /Unlinked this Pi session/);
+    assert.deepEqual(node.command, originalNode.command);
+  });
+});
+
+for (const failedCommand of ["show", "configure"]) {
+  test.test(`unlink tool reports ${failedCommand} errors and preserves signaling until a successful retry`, async () => {
+    const node = createLinkedNode();
+    const originalNode = structuredClone(node);
+    let commandShouldFail = true;
+
+    await withTreeTYExtension({
+      node,
+      executeCommand: async (commandArguments) => commandShouldFail && commandArguments[0] === failedCommand
+        ? { code: 1, stderr: "configuration changed", stdout: "" }
+        : undefined,
+    }, async (extensionHarness) => {
+      await extensionHarness.emitEvent("session_start");
+      await assert.rejects(extensionHarness.invokeTool("treety_unlink"), /configuration changed/);
+      await extensionHarness.emitEvent("agent_settled");
+
+      assert.deepEqual(node, originalNode);
+      assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
+      assert.deepEqual(extensionHarness.notifications, []);
+
+      commandShouldFail = false;
+      await extensionHarness.invokeTool("treety_unlink");
+      await extensionHarness.emitEvent("agent_settled");
+
+      assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("unregister"));
+    });
+  });
+}
+
+test.test("link tool reports command failure without enabling signals and can retry", async () => {
+  let commandShouldFail = true;
+
+  await withTreeTYExtension({
+    executeCommand: async () => commandShouldFail
+      ? { code: 1, stderr: "configuration failed", stdout: "" }
+      : undefined,
+  }, async (extensionHarness) => {
+    await assert.rejects(extensionHarness.invokeTool("treety_link"), /configuration failed/);
+    await extensionHarness.emitEvent("agent_settled");
+
+    assert.deepEqual(extensionHarness.treeTYCommands, [
+      ["treety", "configure", "--cwd", "/workspace/packages/pi", "--", "pi", "--session", piSessionId],
+    ]);
+
+    commandShouldFail = false;
+    await extensionHarness.invokeTool("treety_link");
+    await extensionHarness.emitEvent("agent_settled");
+
+    assert.deepEqual(extensionHarness.treeTYCommands.at(-1), getActivityCommand("idle", "set"));
+    assert.deepEqual(extensionHarness.notifications, []);
+  });
+});
+
+for (const toolName of ["treety_link", "treety_unlink"]) {
+  test.test(`${toolName} rejects outside a managed TreeTY terminal`, async () => {
+    await withTreeTYExtension({}, async (extensionHarness) => {
+      delete process.env.TREETY_SESSION_ID;
+
+      await assert.rejects(extensionHarness.invokeTool(toolName), new RegExp(`${toolName} must run inside a TreeTY terminal`));
+
+      assert.deepEqual(extensionHarness.treeTYCommands, []);
+      assert.deepEqual(extensionHarness.notifications, []);
+    });
+  });
+}
+
 function getActivityCommand(activity: "register" | "busy" | "idle" | "unregister", attention?: "set"): string[] {
   const activityCommand = [
     "treety", "activity", activity, "--reporter", piSessionId,
@@ -523,6 +732,7 @@ async function withTreeTYExtension(
 
 function createExtensionHarness(options: ExtensionHarnessOptions) {
   const registeredCommands = new Map<string, PiCommand>();
+  const registeredTools = new Map<string, PiTool>();
   const registeredEventHandlers = new Map<PiEventName, PiEventHandler>();
   const treeTYCommands: string[][] = [];
   const notifications: string[] = [];
@@ -577,16 +787,29 @@ function createExtensionHarness(options: ExtensionHarnessOptions) {
     },
     on: (eventName, eventHandler) => registeredEventHandlers.set(eventName, eventHandler),
     registerCommand: (commandName, command) => registeredCommands.set(commandName, command),
+    registerTool: (tool) => registeredTools.set(tool.name, tool),
   });
 
   return {
     treeTYCommands,
     notifications,
+    registeredTools,
     setSessionId: (sessionId: string) => {
       currentSessionId = sessionId;
     },
     setIsIdle: (nextIsIdle: boolean) => {
       isIdle = nextIsIdle;
+    },
+    invokeTool: async (toolName: string): Promise<PiToolResult> => {
+      const tool = registeredTools.get(toolName);
+
+      assert.ok(tool, `${toolName} must be registered`);
+
+      return tool.execute("tool-call-123", {}, undefined, undefined, {
+        cwd: extensionContext.cwd,
+        isIdle: extensionContext.isIdle,
+        sessionManager: extensionContext.sessionManager,
+      });
     },
     invokeCommand: async (commandName: string) => {
       const command = registeredCommands.get(commandName);

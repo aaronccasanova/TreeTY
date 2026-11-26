@@ -25,6 +25,30 @@ interface PiCommandResult {
   stdout: string;
 }
 
+interface PiToolResult {
+  content: { type: "text"; text: string }[];
+  details: undefined;
+}
+
+interface PiTool {
+  name: string;
+  label: string;
+  description: string;
+  parameters: {
+    type: "object";
+    properties: Record<string, never>;
+    additionalProperties: false;
+  };
+  executionMode: "sequential";
+  execute(
+    toolCallId: string,
+    parameters: Record<string, never>,
+    signal: AbortSignal | undefined,
+    onUpdate: ((toolResult: PiToolResult) => void) | undefined,
+    extensionContext: PiExtensionContext,
+  ): Promise<PiToolResult>;
+}
+
 interface PiSessionUnlinkResult {
   changed: boolean;
   preservedCommand: boolean;
@@ -52,6 +76,7 @@ interface PiExtensionAPI {
     ) => Promise<void>,
   ): void;
   registerCommand(commandName: string, command: PiCommand): void;
+  registerTool(tool: PiTool): void;
 }
 
 const treeTYConfigFileEnvironmentName = "TREETY_CONFIG_FILE";
@@ -66,10 +91,10 @@ export default function registerTreeTYExtension(
   let uiPromptActive = false;
   let pendingOperation = Promise.resolve();
 
-  const runSerializedOperation = (operation: () => Promise<void>): Promise<void> => {
+  const runSerializedOperation = <Result>(operation: () => Promise<Result>): Promise<Result> => {
     const nextOperation = pendingOperation.then(operation);
 
-    pendingOperation = nextOperation.catch(() => {});
+    pendingOperation = nextOperation.then(() => {}, () => {});
 
     return nextOperation;
   };
@@ -88,42 +113,72 @@ export default function registerTreeTYExtension(
     });
   };
 
+  const linkSession = (
+    extensionContext: PiExtensionContext,
+    actionName: string,
+  ): Promise<string> => {
+    const piSessionId = extensionContext.sessionManager.getSessionId();
+
+    return runSerializedOperation(async () => {
+      assertTreeTYEnvironment(process.env, actionName);
+
+      await runTreeTYCommand(extensionAPI, [
+        "configure",
+        "--cwd",
+        extensionContext.cwd,
+        "--",
+        "pi",
+        "--session",
+        piSessionId,
+      ]);
+      await runTreeTYCommand(extensionAPI, [
+        "metadata",
+        "set-path",
+        piSessionMetadataPath,
+        JSON.stringify(piSessionId),
+      ]);
+      await signalTreeTYActivity(extensionAPI, piSessionId, "register");
+
+      linkedPiSessionId = piSessionId;
+
+      if (!extensionContext.isIdle() && !uiPromptActive) {
+        await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
+      }
+
+      return "TreeTY will resume this Pi session and show its activity and attention state.";
+    });
+  };
+
+  const unlinkSession = (
+    extensionContext: PiExtensionContext,
+    actionName: string,
+  ): Promise<string> => {
+    const piSessionId = extensionContext.sessionManager.getSessionId();
+
+    return runSerializedOperation(async () => {
+      assertTreeTYEnvironment(process.env, actionName);
+
+      const piSessionUnlinkResult = await unlinkPiSession(extensionAPI, piSessionId);
+
+      linkedPiSessionId = undefined;
+      await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
+
+      const message = piSessionUnlinkResult.changed
+        ? "Unlinked this Pi session. The terminal and saved conversation are preserved."
+        : "This Pi session is already unlinked from this TreeTY terminal.";
+
+      return piSessionUnlinkResult.preservedCommand
+        ? `${message} The custom startup command was left unchanged.`
+        : message;
+    });
+  };
+
   const linkCommand: PiCommand = {
     description: "Link this Pi session to the current TreeTY terminal",
-    handler: (_commandArguments, commandContext) => {
-      const piSessionId = commandContext.sessionManager.getSessionId();
+    handler: async (_commandArguments, commandContext) => {
+      const message = await linkSession(commandContext, "/treety-link");
 
-      return runSerializedOperation(async () => {
-        assertTreeTYEnvironment(process.env);
-
-        await runTreeTYCommand(extensionAPI, [
-          "configure",
-          "--cwd",
-          commandContext.cwd,
-          "--",
-          "pi",
-          "--session",
-          piSessionId,
-        ]);
-        await runTreeTYCommand(extensionAPI, [
-          "metadata",
-          "set-path",
-          piSessionMetadataPath,
-          JSON.stringify(piSessionId),
-        ]);
-        await signalTreeTYActivity(extensionAPI, piSessionId, "register");
-
-        linkedPiSessionId = piSessionId;
-
-        if (!commandContext.isIdle() && !uiPromptActive) {
-          await signalTreeTYActivity(extensionAPI, piSessionId, "busy");
-        }
-
-        commandContext.ui.notify(
-          "TreeTY will resume this Pi session and show its activity and attention state.",
-          "info",
-        );
-      });
+      commandContext.ui.notify(message, "info");
     },
   };
 
@@ -135,28 +190,36 @@ export default function registerTreeTYExtension(
 
   extensionAPI.registerCommand("treety-unlink", {
     description: "Unlink this Pi session while keeping the TreeTY terminal",
-    handler: (_commandArguments, commandContext) => {
-      const piSessionId = commandContext.sessionManager.getSessionId();
+    handler: async (_commandArguments, commandContext) => {
+      const message = await unlinkSession(commandContext, "/treety-unlink");
 
-      return runSerializedOperation(async () => {
-        assertTreeTYEnvironment(process.env, "/treety-unlink");
+      commandContext.ui.notify(message, "info");
+    },
+  });
 
-        const piSessionUnlinkResult = await unlinkPiSession(extensionAPI, piSessionId);
+  extensionAPI.registerTool({
+    name: "treety_link",
+    label: "Link TreeTY session",
+    description: "Link the current Pi session to its TreeTY terminal, configure resume, and enable activity and attention signals. Requires a TreeTY terminal.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    executionMode: "sequential",
+    execute: async (_toolCallId, _parameters, _signal, _onUpdate, extensionContext) => {
+      const message = await linkSession(extensionContext, "treety_link");
 
-        linkedPiSessionId = undefined;
-        await signalTreeTYActivity(extensionAPI, piSessionId, "unregister");
+      return { content: [{ type: "text", text: message }], details: undefined };
+    },
+  });
 
-        const notification = piSessionUnlinkResult.changed
-          ? "Unlinked this Pi session. The terminal and saved conversation are preserved."
-          : "This Pi session is already unlinked from this TreeTY terminal.";
+  extensionAPI.registerTool({
+    name: "treety_unlink",
+    label: "Unlink TreeTY session",
+    description: "Unlink the current Pi session from its TreeTY terminal and stop activity and attention signals. Keeps the terminal open and saved session history intact. Requires a TreeTY terminal.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    executionMode: "sequential",
+    execute: async (_toolCallId, _parameters, _signal, _onUpdate, extensionContext) => {
+      const message = await unlinkSession(extensionContext, "treety_unlink");
 
-        commandContext.ui.notify(
-          piSessionUnlinkResult.preservedCommand
-            ? `${notification} The custom startup command was left unchanged.`
-            : notification,
-          "info",
-        );
-      });
+      return { content: [{ type: "text", text: message }], details: undefined };
     },
   });
 
@@ -281,7 +344,7 @@ async function unlinkPiSession(
   const treeTYNode = JSON.parse(treeTYNodeResult.stdout) as unknown;
 
   if (!getValueIsRecord(treeTYNode) || treeTYNode["kind"] !== "terminal") {
-    throw new Error("/treety-unlink requires a TreeTY terminal leaf.");
+    throw new Error("Unlinking requires a TreeTY terminal leaf.");
   }
 
   const metadata = treeTYNode["metadata"];

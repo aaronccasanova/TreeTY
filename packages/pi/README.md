@@ -30,6 +30,8 @@ The Pi extension currently has no runtime package dependencies and does not impo
 
 ## Link and unlink sessions
 
+Ask Pi to link or unlink its current session using the `treety_link` and `treety_unlink` tools. Both take no arguments and use Pi's current session ID. They share the slash commands' behavior, return a confirmation as a tool result, and report failures through Pi's normal tool error handling. They work without an interactive UI.
+
 Run `/treety-link` from Pi inside a TreeTY terminal. `/treety-setup` remains a compatibility alias for the same command. The command records the current session ID from Pi's session manager, captures Pi's current working directory, configures the terminal to resume it with `pi --session <session-id>` from that directory, and enables lifecycle activity signaling.
 
 A linked Pi session is idle while waiting for input and busy throughout an agent run, including tools, automatic retries, queued follow-ups, and automatic compaction. Final `agent_settled` marks it idle and needing attention. `agent_end` does not mark it idle as Pi may continue automatically. Manual `/compact` is busy until it succeeds, fails, or is cancelled. Successful manual compaction also marks attention. Pi versions with `ui_prompt_start` and `ui_prompt_end` show idle during a blocking extension dialog and resume busy if work remains. Opening a dialog does not create a completion attention marker.
